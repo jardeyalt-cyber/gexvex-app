@@ -1,0 +1,9 @@
+{
+  "name": "GexVex Live Heatmap",
+  "short_name": "GexVex",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#0a0e13",
+  "orientation": "portrait"
+}
