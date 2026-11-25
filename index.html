@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0a0e13" />
+  <link rel="manifest" href="./manifest.json" />
+  <title>GexVex Live</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #000000;
+      --panel: #0a0e13;
+      --border: #1d283b;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --purple: #7e22ce;
+      --slate: #234f6e;
+      --yellow: #facc15;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Roboto Mono', monospace; }
+    body { background: var(--bg); color: var(--text); padding-bottom: 70px; -webkit-font-smoothing: antialiased; }
+    header {
+      position: sticky; top: 0; z-index: 20; background: var(--panel);
+      border-bottom: 1px solid var(--border); padding: 10px 12px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .title { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; color: #fff; }
+    .stamp { font-size: 11px; color: var(--yellow); }
+    .pills {
+      display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px;
+      background: #05070a; border-bottom: 1px solid var(--border);
+    }
+    .pill {
+      padding: 6px 11px; border: 1px solid var(--border); background: var(--panel);
+      color: var(--muted); font-size: 12px; font-weight: 700; border-radius: 4px; cursor: pointer;
+    }
+    .pill.active { background: #fff; color: #000; border-color: #fff; }
+    .summary-bar {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+      padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+      font-size: 11px;
+    }
+    .stat span { display: block; color: var(--muted); font-size: 10px; }
+    .stat strong { font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th {
+      background: var(--panel); color: var(--muted); font-weight: 600;
+      padding: 7px 6px; border-bottom: 1px solid var(--border); text-align: right; position: sticky; top: 41px;
+    }
+    th:first-child, td:first-child { text-align: left; padding-left: 10px; }
+    td { padding: 7px 6px; border-bottom: 1px solid #111827; text-align: right; white-space: nowrap; }
+    tr.spot-row td { background: #ffffff !important; color: #000000 !important; font-weight: 700; }
+    .cell-pos { background: rgba(250, 204, 21, 0.22); color: #fde047; font-weight: 600; }
+    .cell-neg { background: rgba(126, 34, 206, 0.32); color: #e9d5ff; font-weight: 600; }
+    .king-cell { font-size: 13px; font-weight: 700; }
+    .badge-call { background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
+    .badge-put { background: rgba(244, 63, 94, 0.2); color: #fb7185; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
+    .magnet-flag { color: var(--yellow); font-weight: 700; }
+    nav {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
+      background: var(--panel); border-top: 1px solid var(--border);
+      display: grid; grid-template-columns: repeat(3, 1fr); z-index: 30;
+    }
+    nav button {
+      background: none; border: none; color: var(--muted); font-size: 11px;
+      font-weight: 700; cursor: pointer; border-right: 1px solid var(--border);
+    }
+    nav button.active { color: var(--yellow); background: #111827; }
+    .setup-box { padding: 20px; text-align: center; }
+    .setup-box input {
+      width: 100%; padding: 10px; margin: 10px 0; background: var(--panel);
+      border: 1px solid var(--border); color: #fff; font-size: 12px;
+    }
+    .setup-box button { padding: 10px 16px; background: var(--yellow); color: #000; border: none; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">GEX/VEX LIVE</div>
+    <div class="stamp" id="statusStamp">CONNECTING...</div>
+  </header>
+
+  <div id="setupScreen" class="setup-box" style="display:none;">
+    <p style="font-size:12px;color:#94a3b8;">Paste your Secret Gist ID once (saved locally on your phone):</p>
+    <input id="gistInput" placeholder="e.g. a1b2c3d4e5f6..." />
+    <button onclick="saveGistId()">SAVE & CONNECT</button>
+  </div>
+
+  <div id="appContent">
+    <div class="pills" id="tickerPills"></div>
+    <div id="viewContainer"></div>
+  </div>
+
+  <nav>
+    <button id="tab-0dte" class="active" onclick="setTab('0dte')">0DTE MAP</button>
+    <button id="tab-7dte" onclick="setTab('7dte')">7DTE MAGNETS</button>
+    <button id="tab-weekly" onclick="setTab('weekly')">WEEKLY OPEX</button>
+  </nav>
+
+  <script>
+    const TICKERS = ["SPY", "QQQ", "SMH", "VIX", "TSLA", "AAPL", "NVDA"];
+    let activeTab = "0dte";
+    let activeTicker = "SPY";
+    let liveData = null;
+    let countdown = 30;
+
+    function getGistId() {
+      const p = new URLSearchParams(window.location.search).get("gist");
+      if (p) { localStorage.setItem("gexvex_gist_id", p); return p; }
+      return localStorage.getItem("gexvex_gist_id") || "";
+    }
+
+    function saveGistId() {
+      const val = document.getElementById("gistInput").value.trim();
+      if (val) {
+        localStorage.setItem("gexvex_gist_id", val);
+        document.getElementById("setupScreen").style.display = "none";
+        document.getElementById("appContent").style.display = "block";
+        fetchLive();
+      }
+    }
+
+    function fmtUsd(v) {
+      if (v === "" || v === null || v === undefined || isNaN(v)) return "—";
+      const n = Number(v);
+      const sign = n < 0 ? "-" : "";
+      const av = Math.abs(n);
+      if (av >= 1e6) return `${sign}$${(av / 1e6).toFixed(1)}M`;
+      if (av >= 1e3) return `${sign}$${(av / 1e3).toFixed(1)}K`;
+      return `${sign}$${av.toFixed(0)}`;
+    }
+
+    function fmtPct(v) {
+      if (typeof v === "string") return v;
+      if (v === null || v === undefined || isNaN(v)) return "—";
+      return `${(Number(v) * 100).toFixed(1)}%`;
+    }
+
+    function renderPills() {
+      const el = document.getElementById("tickerPills");
+      el.style.display = activeTab === "weekly" ? "none" : "flex";
+      el.innerHTML = TICKERS.map(t =>
+        `<button class="pill ${t === activeTicker ? 'active' : ''}" onclick="setTicker('${t}')">${t}</button>`
+      ).join("");
+    }
+
+    function setTab(tab) {
+      activeTab = tab;
+      ["0dte", "7dte", "weekly"].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.toggle("active", t === tab);
+      });
+      renderPills();
+      renderView();
+    }
+
+    function setTicker(t) {
+      activeTicker = t;
+      renderPills();
+      renderView();
+    }
+
+    function renderView() {
+      const box = document.getElementById("viewContainer");
+      if (!liveData) { box.innerHTML = `<div style="padding:20px;color:#94a3b8;font-size:12px;">Waiting for data...</div>`; return; }
+
+      if (activeTab === "0dte") {
+        const d = liveData.zero_dte?.tickers?.[activeTicker];
+        if (!d) { box.innerHTML = `<div style="padding:20px;">No 0DTE data for ${activeTicker}</div>`; return; }
+        let spotIdx = -1, minDiff = Infinity;
+        d.rows.forEach((r, i) => {
+          const diff = Math.abs(r.strike - d.spot);
+          if (diff < minDiff) { minDiff = diff; spotIdx = i; }
+        });
+
+        box.innerHTML = `
+          <div class="summary-bar">
+            <div class="stat"><span>SPOT (${d.label})</span><strong>$${Number(d.spot).toFixed(2)}</strong></div>
+            <div class="stat"><span>NET GEX</span><strong>${fmtUsd(d.total_gex)}</strong></div>
+            <div class="stat"><span>NET VEX</span><strong>${fmtUsd(d.total_vex)}</strong></div>
+          </div>
+          <table>
+            <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>10m</th><th>1h</th></tr></thead>
+            <tbody>
+              ${d.rows.map((r, i) => `
+                <tr class="${i === spotIdx ? 'spot-row' : ''}">
+                  <td>$${r.strike}</td>
+                  <td>${fmtPct(r.pct)}</td>
+                  <td class="${r.gex >= 0 ? 'cell-pos' : 'cell-neg'} ${r.gm === '👑' ? 'king-cell' : ''}">${r.gm ? r.gm + ' ' : ''}${fmtUsd(r.gex)}</td>
+                  <td class="${r.vex >= 0 ? 'cell-pos' : 'cell-neg'} ${r.vm === '👑' ? 'king-cell' : ''}">${r.vm ? r.vm + ' ' : ''}${fmtUsd(r.vex)}</td>
+                  <td>${fmtPct(r.v10)}</td>
+                  <td>${fmtPct(r.v1h)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>`;
+      } else if (activeTab === "7dte") {
+        const sc = liveData.scanner_7dte || {};
+        const conf = sc.confluence || [];
+        const t5 = sc.top5?.[activeTicker];
+        box.innerHTML = `
+          <div style="padding:8px 10px;background:#0a0e13;border-bottom:1px solid #1d283b;font-size:11px;font-weight:700;color:#facc15;">
+            MAGNET CONFLUENCE RANKING (BY R:R)
+          </div>
+          <table>
+            <thead><tr><th>#</th><th>Sym</th><th>Strike</th><th>GEX</th><th>VEX</th><th>Contract</th><th>R:R</th></tr></thead>
+            <tbody>
+              ${conf.map((c, idx) => `
+                <tr>
+                  <td>#${idx + 1}</td>
+                  <td><strong>${c.ticker}</strong>${c.is_magnet ? ' 🧲' : ''}</td>
+                  <td>$${c.strike} (${fmtPct(c.pct_dist)})</td>
+                  <td class="${c.gex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(c.gex)}</td>
+                  <td class="${c.vex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(c.vex)}</td>
+                  <td><span class="${c.side === 'CALL' ? 'badge-call' : 'badge-put'}">${c.side}</span> ${c.price !== '' ? '$' + Number(c.price).toFixed(2) : '—'}</td>
+                  <td><strong>${c.rr}x</strong></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+          <div style="padding:8px 10px;background:#0a0e13;border-top:1px solid #1d283b;border-bottom:1px solid #1d283b;font-size:11px;font-weight:700;margin-top:8px;">
+            ${activeTicker} TOP-5 ~7DTE NODES (${t5?.expiry || '7DTE'})
+          </div>
+          <table>
+            <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>Score</th><th>Side / Price</th><th>Flag</th></tr></thead>
+            <tbody>
+              ${(t5?.nodes || []).map(n => `
+                <tr>
+                  <td>$${n.strike}</td>
+                  <td>${fmtPct(n.pct_dist)}</td>
+                  <td class="${n.gex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(n.gex)}</td>
+                  <td class="${n.vex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(n.vex)}</td>
+                  <td>${n.confluence}</td>
+                  <td><span class="${n.side === 'CALL' ? 'badge-call' : 'badge-put'}">${n.side}</span> ${n.price !== '' ? '$' + Number(n.price).toFixed(2) : '—'}</td>
+                  <td class="magnet-flag">${n.flag || '—'}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>`;
+      } else {
+        const w = liveData.weekly || {};
+        const exps = (w.expiries || []).slice(0, 5);
+        box.innerHTML = `
+          <div class="summary-bar">
+            <div class="stat"><span>SPY SPOT</span><strong>$${Number(w.spot || 0).toFixed(2)}</strong></div>
+            <div class="stat"><span>WINDOW</span><strong>60 STRIKES</strong></div>
+            <div class="stat"><span>MODE</span><strong>GEX MATRIX</strong></div>
+          </div>
+          <table>
+            <thead><tr><th>Strike</th>${exps.map(e => `<th>${e.slice(5)}</th>`).join("")}</tr></thead>
+            <tbody>
+              ${(w.strikes || []).map((k, rIdx) => {
+                const isSpot = w.spot && Math.abs(k - w.spot) < 0.51;
+                return `<tr class="${isSpot ? 'spot-row' : ''}">
+                  <td>$${k}</td>
+                  ${exps.map((_, cIdx) => {
+                    const cell = w.gex?.[rIdx]?.[cIdx] || { v: 0, b: "" };
+                    return `<td class="${cell.v >= 0 ? 'cell-pos' : 'cell-neg'} ${cell.b === '👑' ? 'king-cell' : ''}">${cell.b ? cell.b + ' ' : ''}${fmtUsd(cell.v)}</td>`;
+                  }).join("")}
+                </tr>`;
+              }).join("")}
+            </tbody>
+          </table>`;
+      }
+    }
+
+    async function fetchLive() {
+      const gistId = getGistId();
+      if (!gistId) {
+        document.getElementById("setupScreen").style.display = "block";
+        document.getElementById("appContent").style.display = "none";
+        return;
+      }
+      try {
+        const res = await fetch(`https://api.github.com/gists/${gistId}?t=${Date.now()}`);
+        const gist = await res.json();
+        const raw = gist.files?.["gexvex_live.json"]?.content;
+        if (raw) {
+          liveData = JSON.parse(raw);
+          renderView();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      countdown = 30;
+    }
+
+    setInterval(() => {
+      countdown--;
+      if (countdown <= 0) fetchLive();
+      const stamp = liveData?.zero_dte?.updated_at || "LIVE";
+      document.getElementById("statusStamp").textContent = `${stamp} • ${countdown}s`;
+    }, 1000);
+
+    renderPills();
+    fetchLive();
+  </script>
+</body>
+</html>
