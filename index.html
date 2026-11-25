@@ -25,10 +25,10 @@
     header {
       position: sticky; top: 0; z-index: 20; background: var(--panel);
       border-bottom: 1px solid var(--border); padding: 10px 12px;
-      display: flex; justify-content: space-between; align-items: center;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
     }
     .title { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; color: #fff; }
-    .stamp { font-size: 11px; color: var(--yellow); }
+    .stamp { font-size: 11px; color: var(--yellow); text-align: right; }
     .pills {
       display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px;
       background: #05070a; border-bottom: 1px solid var(--border);
@@ -59,6 +59,7 @@
     .badge-call { background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .badge-put { background: rgba(244, 63, 94, 0.2); color: #fb7185; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .magnet-flag { color: var(--yellow); font-weight: 700; }
+    .empty-msg { padding: 18px 12px; color: var(--muted); font-size: 11px; border-bottom: 1px solid #111827; }
     nav {
       position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
       background: var(--panel); border-top: 1px solid var(--border);
@@ -85,7 +86,7 @@
 
   <div id="setupScreen" class="setup-box" style="display:none;">
     <p style="font-size:12px;color:#94a3b8;">Paste your Secret Gist ID once (saved locally on your phone):</p>
-    <input id="gistInput" placeholder="e.g. a1b2c3d4e5f6..." />
+    <input id="gistInput" placeholder="e.g. f9f6506d780efb0df175de3cc42d60e1" />
     <button onclick="saveGistId()">SAVE & CONNECT</button>
   </div>
 
@@ -102,15 +103,17 @@
 
   <script>
     const TICKERS = ["SPY", "QQQ", "SMH", "VIX", "TSLA", "AAPL", "NVDA"];
+    const GIST_OWNER = "jardeyalt-cyber";
     let activeTab = "0dte";
     let activeTicker = "SPY";
     let liveData = null;
+    let lastError = "";
     let countdown = 30;
 
     function getGistId() {
       const p = new URLSearchParams(window.location.search).get("gist");
-      if (p) { localStorage.setItem("gexvex_gist_id", p); return p; }
-      return localStorage.getItem("gexvex_gist_id") || "";
+      if (p) { localStorage.setItem("gexvex_gist_id", p.trim()); return p.trim(); }
+      return (localStorage.getItem("gexvex_gist_id") || "").trim();
     }
 
     function saveGistId() {
@@ -164,20 +167,26 @@
 
     function renderView() {
       const box = document.getElementById("viewContainer");
-      if (!liveData) { box.innerHTML = `<div style="padding:20px;color:#94a3b8;font-size:12px;">Waiting for data...</div>`; return; }
+      if (!liveData) {
+        box.innerHTML = `<div class="empty-msg">${lastError ? "Fetch error: " + lastError : "Waiting for data..."}</div>`;
+        return;
+      }
 
       if (activeTab === "0dte") {
         const d = liveData.zero_dte?.tickers?.[activeTicker];
-        if (!d) { box.innerHTML = `<div style="padding:20px;">No 0DTE data for ${activeTicker}</div>`; return; }
+        if (!d || !Array.isArray(d.rows) || d.rows.length === 0) {
+          box.innerHTML = `<div class="empty-msg">No 0DTE rows for ${activeTicker} in gexvex_live.json.</div>`;
+          return;
+        }
         let spotIdx = -1, minDiff = Infinity;
         d.rows.forEach((r, i) => {
-          const diff = Math.abs(r.strike - d.spot);
+          const diff = Math.abs(Number(r.strike) - Number(d.spot));
           if (diff < minDiff) { minDiff = diff; spotIdx = i; }
         });
 
         box.innerHTML = `
           <div class="summary-bar">
-            <div class="stat"><span>SPOT (${d.label})</span><strong>$${Number(d.spot).toFixed(2)}</strong></div>
+            <div class="stat"><span>SPOT (${d.label || "0DTE"})</span><strong>$${Number(d.spot).toFixed(2)}</strong></div>
             <div class="stat"><span>NET GEX</span><strong>${fmtUsd(d.total_gex)}</strong></div>
             <div class="stat"><span>NET VEX</span><strong>${fmtUsd(d.total_vex)}</strong></div>
           </div>
@@ -198,12 +207,15 @@
           </table>`;
       } else if (activeTab === "7dte") {
         const sc = liveData.scanner_7dte || {};
-        const conf = sc.confluence || [];
+        const conf = Array.isArray(sc.confluence) ? sc.confluence : [];
         const t5 = sc.top5?.[activeTicker];
+        const nodes = Array.isArray(t5?.nodes) ? t5.nodes : [];
+
         box.innerHTML = `
           <div style="padding:8px 10px;background:#0a0e13;border-bottom:1px solid #1d283b;font-size:11px;font-weight:700;color:#facc15;">
             MAGNET CONFLUENCE RANKING (BY R:R)
           </div>
+          ${conf.length === 0 ? `<div class="empty-msg">scanner_7dte.confluence is empty in gexvex_live.json.</div>` : `
           <table>
             <thead><tr><th>#</th><th>Sym</th><th>Strike</th><th>GEX</th><th>VEX</th><th>Contract</th><th>R:R</th></tr></thead>
             <tbody>
@@ -214,45 +226,51 @@
                   <td>$${c.strike} (${fmtPct(c.pct_dist)})</td>
                   <td class="${c.gex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(c.gex)}</td>
                   <td class="${c.vex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(c.vex)}</td>
-                  <td><span class="${c.side === 'CALL' ? 'badge-call' : 'badge-put'}">${c.side}</span> ${c.price !== '' ? '$' + Number(c.price).toFixed(2) : '—'}</td>
-                  <td><strong>${c.rr}x</strong></td>
+                  <td><span class="${c.side === 'CALL' ? 'badge-call' : 'badge-put'}">${c.side}</span> ${c.price !== '' && c.price !== undefined ? '$' + Number(c.price).toFixed(2) : '—'}</td>
+                  <td><strong>${c.rr ?? '—'}x</strong></td>
                 </tr>
               `).join("")}
             </tbody>
-          </table>
+          </table>`}
           <div style="padding:8px 10px;background:#0a0e13;border-top:1px solid #1d283b;border-bottom:1px solid #1d283b;font-size:11px;font-weight:700;margin-top:8px;">
             ${activeTicker} TOP-5 ~7DTE NODES (${t5?.expiry || '7DTE'})
           </div>
+          ${nodes.length === 0 ? `<div class="empty-msg">scanner_7dte.top5.${activeTicker}.nodes is empty in gexvex_live.json.</div>` : `
           <table>
             <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>Score</th><th>Side / Price</th><th>Flag</th></tr></thead>
             <tbody>
-              ${(t5?.nodes || []).map(n => `
+              ${nodes.map(n => `
                 <tr>
                   <td>$${n.strike}</td>
                   <td>${fmtPct(n.pct_dist)}</td>
                   <td class="${n.gex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(n.gex)}</td>
                   <td class="${n.vex >= 0 ? 'cell-pos' : 'cell-neg'}">${fmtUsd(n.vex)}</td>
-                  <td>${n.confluence}</td>
-                  <td><span class="${n.side === 'CALL' ? 'badge-call' : 'badge-put'}">${n.side}</span> ${n.price !== '' ? '$' + Number(n.price).toFixed(2) : '—'}</td>
+                  <td>${n.confluence ?? '—'}</td>
+                  <td><span class="${n.side === 'CALL' ? 'badge-call' : 'badge-put'}">${n.side}</span> ${n.price !== '' && n.price !== undefined ? '$' + Number(n.price).toFixed(2) : '—'}</td>
                   <td class="magnet-flag">${n.flag || '—'}</td>
                 </tr>
               `).join("")}
             </tbody>
-          </table>`;
+          </table>`}`;
       } else {
         const w = liveData.weekly || {};
-        const exps = (w.expiries || []).slice(0, 5);
+        const exps = Array.isArray(w.expiries) ? w.expiries.slice(0, 5) : [];
+        const strikes = Array.isArray(w.strikes) ? w.strikes : [];
+        if (strikes.length === 0 || exps.length === 0) {
+          box.innerHTML = `<div class="empty-msg">weekly matrix (expiries/strikes/gex) is empty in gexvex_live.json.</div>`;
+          return;
+        }
         box.innerHTML = `
           <div class="summary-bar">
             <div class="stat"><span>SPY SPOT</span><strong>$${Number(w.spot || 0).toFixed(2)}</strong></div>
-            <div class="stat"><span>WINDOW</span><strong>60 STRIKES</strong></div>
+            <div class="stat"><span>WINDOW</span><strong>${strikes.length} STRIKES</strong></div>
             <div class="stat"><span>MODE</span><strong>GEX MATRIX</strong></div>
           </div>
           <table>
-            <thead><tr><th>Strike</th>${exps.map(e => `<th>${e.slice(5)}</th>`).join("")}</tr></thead>
+            <thead><tr><th>Strike</th>${exps.map(e => `<th>${String(e).slice(5)}</th>`).join("")}</tr></thead>
             <tbody>
-              ${(w.strikes || []).map((k, rIdx) => {
-                const isSpot = w.spot && Math.abs(k - w.spot) < 0.51;
+              ${strikes.map((k, rIdx) => {
+                const isSpot = w.spot && Math.abs(Number(k) - Number(w.spot)) < 0.51;
                 return `<tr class="${isSpot ? 'spot-row' : ''}">
                   <td>$${k}</td>
                   ${exps.map((_, cIdx) => {
@@ -274,15 +292,16 @@
         return;
       }
       try {
-        const res = await fetch(`https://api.github.com/gists/${gistId}?t=${Date.now()}`);
-        const gist = await res.json();
-        const raw = gist.files?.["gexvex_live.json"]?.content;
-        if (raw) {
-          liveData = JSON.parse(raw);
-          renderView();
-        }
+        const rawUrl = `https://gist.githubusercontent.com/${GIST_OWNER}/${gistId}/raw/gexvex_live.json?t=${Date.now()}`;
+        const res = await fetch(rawUrl, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        liveData = await res.json();
+        lastError = "";
+        renderView();
       } catch (e) {
+        lastError = e.message || String(e);
         console.error(e);
+        renderView();
       }
       countdown = 30;
     }
@@ -290,7 +309,7 @@
     setInterval(() => {
       countdown--;
       if (countdown <= 0) fetchLive();
-      const stamp = liveData?.zero_dte?.updated_at || "LIVE";
+      const stamp = liveData?.zero_dte?.updated_at || (lastError ? "ERR" : "LIVE");
       document.getElementById("statusStamp").textContent = `${stamp} • ${countdown}s`;
     }, 1000);
 
