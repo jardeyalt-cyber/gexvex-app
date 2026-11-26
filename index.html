@@ -22,7 +22,7 @@
       --yellow: #facc15;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Roboto Mono', monospace; }
-    body { background: var(--bg); color: var(--text); padding-bottom: 70px; -webkit-font-smoothing: antialiased; }
+    body { background: var(--bg); color: var(--text); padding-bottom: 120px; -webkit-font-smoothing: antialiased; }
     header {
       position: sticky; top: 0; z-index: 30; background: var(--panel);
       border-bottom: 1px solid var(--border); padding: 10px 12px; height: 42px;
@@ -85,6 +85,10 @@
     .badge-call { background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .badge-put { background: rgba(244, 63, 94, 0.2); color: #fb7185; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .magnet-flag { color: var(--yellow); font-weight: 700; }
+    .stale-banner {
+      display: none; position: fixed; left: 0; right: 0; bottom: 56px; z-index: 35;
+      padding: 9px 12px; background: #b91c1c; color: #fff; font-size: 11px; font-weight: 700;
+    }
     .empty-msg { padding: 18px 12px; color: var(--muted); font-size: 11px; border-bottom: 1px solid #111827; }
     nav {
       position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
@@ -106,7 +110,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.2</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.3</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -117,6 +121,7 @@
   </div>
 
   <div id="appContent">
+    <div class="stale-banner" id="staleBanner"></div>
     <div class="pills" id="tickerPills"></div>
     <div id="viewContainer"></div>
   </div>
@@ -134,7 +139,13 @@
     let weeklyMode = "gex";
     let liveData = null;
     let lastError = "";
-    let countdown = 30;
+    const POLL_SECONDS = 90; // GitHub allows 60 unsigned requests per hour per IP
+    // Oldest acceptable data per tab, in seconds. Allows for polling and Gist delay.
+    const STALE_AFTER = { "0dte": 240, "7dte": 720, "weekly": 720 };
+    const SECTION = { "0dte": "zero_dte", "7dte": "scanner_7dte", "weekly": "weekly" };
+    let nextFetchAt = 0;
+    let fetching = false;
+    let needsScroll = true;
 
     function getGistId() {
       const p = new URLSearchParams(window.location.search).get("gist");
@@ -207,12 +218,16 @@
       ["0dte", "7dte", "weekly"].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle("active", t === tab);
       });
+      needsScroll = true;
+      window.scrollTo(0, 0);
       renderPills();
       renderView();
+      updateStatus();
     }
 
     function setTicker(t) {
       activeTicker = t;
+      needsScroll = true;
       renderPills();
       renderView();
     }
@@ -269,6 +284,10 @@
               `).join("")}
             </tbody>
           </table>`;
+        if (needsScroll) {
+          box.querySelector("tr.spot-row")?.scrollIntoView({ block: "center" });
+          needsScroll = false;
+        }
       } else if (activeTab === "7dte") {
         const sc = liveData.scanner_7dte || {};
         const conf = Array.isArray(sc.confluence) ? sc.confluence : [];
@@ -392,6 +411,33 @@
       }
     }
 
+    function fmtAge(sec) {
+      if (sec < 60) return `${sec}s`;
+      if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+      if (sec < 86400) return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
+      return `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h`;
+    }
+
+    function updateStatus() {
+      const section = liveData?.[SECTION[activeTab]];
+      const ts = Number(section?.ts || liveData?.server_ts || 0);
+      const age = ts ? Math.max(0, Math.floor(Date.now() / 1000) - ts) : null;
+      const stale = age !== null && age > STALE_AFTER[activeTab];
+      const wait = Math.max(0, Math.ceil((nextFetchAt - Date.now()) / 1000));
+
+      const stamp = section?.updated_at ? String(section.updated_at).replace("AS OF: ", "")
+        : (lastError ? "ERR" : "LIVE");
+      document.getElementById("statusStamp").textContent = `${stamp} • ${wait}s`;
+
+      const messages = [];
+      if (stale) messages.push(`STALE: data is ${fmtAge(age)} old. Do not treat as live.`);
+      else if (liveData && age === null) messages.push("STALE: data has no timestamp.");
+      if (lastError && liveData) messages.push(`Refresh failed (${lastError}). Showing last data received.`);
+      const banner = document.getElementById("staleBanner");
+      banner.textContent = messages.join(" ");
+      banner.style.display = messages.length ? "block" : "none";
+    }
+
     async function fetchLive() {
       const gistId = getGistId();
       if (!gistId) {
@@ -399,28 +445,36 @@
         document.getElementById("appContent").style.display = "none";
         return;
       }
+      if (fetching) return;
+      fetching = true;
+      nextFetchAt = Date.now() + POLL_SECONDS * 1000;
       try {
         const res = await fetch(`https://api.github.com/gists/${gistId}?t=${Date.now()}`, { cache: "no-store" });
+        if (res.status === 403 || res.status === 429) {
+          const reset = Number(res.headers.get("x-ratelimit-reset")) * 1000;
+          if (reset > nextFetchAt) nextFetchAt = reset;
+          throw new Error(`GitHub request limit, HTTP ${res.status}`);
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const gist = await res.json();
         const raw = gist.files?.["gexvex_live.json"]?.content;
         if (!raw) throw new Error("gexvex_live.json missing in Gist");
         liveData = JSON.parse(raw);
         lastError = "";
-        renderView();
       } catch (e) {
         lastError = e.message || String(e);
         console.error(e);
-        renderView();
+      } finally {
+        fetching = false;
       }
-      countdown = 30;
+      renderView();
+      updateStatus();
     }
 
+    // Wall-clock timing, so a backgrounded tab catches up as soon as it runs again.
     setInterval(() => {
-      countdown--;
-      if (countdown <= 0) fetchLive();
-      const stamp = liveData?.zero_dte?.updated_at || (lastError ? "ERR" : "LIVE");
-      document.getElementById("statusStamp").textContent = `${stamp} • ${countdown}s`;
+      if (getGistId() && Date.now() >= nextFetchAt) fetchLive();
+      updateStatus();
     }, 1000);
 
     renderPills();
