@@ -190,7 +190,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.9.2</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.9.3</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -438,7 +438,7 @@
       return `<span class="seg"><button class="${deltaTf === '10m' ? 'on' : ''}" onclick="setDeltaTf('10m')">10m</button><button class="${deltaTf === '1h' ? 'on' : ''}" onclick="setDeltaTf('1h')">1h</button></span>`;
     }
 
-    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more).</div>`;
+    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price).</div>`;
 
     function renderZeroDte(sym) {
       const z = zeroData(sym);
@@ -455,7 +455,7 @@
       const g = deltaTf === "10m" ? "g10" : "g1h", v = deltaTf === "10m" ? "v10" : "v1h";
       return `
         <div class="summary-bar">
-          <div class="stat"><span>SPOT (${d.label || "0DTE"})</span><strong>$${z.spotNum.toFixed(2)}</strong></div>
+          <div class="stat"><span>SPOT (${d.label || "0DTE"}${d.source === "chain" ? " · OI" : ""})</span><strong>$${z.spotNum.toFixed(2)}</strong></div>
           <div class="stat"><span>NET GEX</span><strong>${fmtUsd(d.total_gex)}</strong></div>
           <div class="stat"><span>NET VEX</span><strong>${fmtUsd(d.total_vex)}</strong></div>
         </div>
@@ -491,7 +491,7 @@
         const kChg = Number.isFinite(kd) ? `<span class="${kd >= 0 ? 'up' : 'down'}">${kd >= 0 ? '↑' : '↓'}${Math.abs(kd).toFixed(1)}%</span>` : '';
         const pad = '<tr class="pad"><td class="strike">&nbsp;</td><td></td></tr>'.repeat(Math.max(0, maxSpot - z.spotIdx));
         return `<div class="tri-col">
-          <div class="tri-head"><b>${sym}</b>${d.label && d.label !== "0DTE" ? ` <span class="muted">${d.label}</span>` : ''}<br>
+          <div class="tri-head"><b>${sym}</b>${d.label && d.label !== "0DTE" ? ` <span class="muted">${d.label}</span>` : ''}${d.source === "chain" ? ' <span class="muted" title="Built from open interest: the Tradytics exposure feed is on a stale price">OI</span>' : ''}<br>
             $${z.spotNum.toFixed(2)}<br>
             <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}</div>
           <table class="hs tri"><tbody>${pad}
