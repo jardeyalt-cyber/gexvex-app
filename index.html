@@ -124,13 +124,32 @@
     nav {
       position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
       background: var(--panel); border-top: 1px solid var(--border);
-      display: grid; grid-template-columns: repeat(3, 1fr); z-index: 30;
+      display: grid; grid-template-columns: repeat(4, 1fr); z-index: 30;
     }
     nav button {
       background: none; border: none; color: var(--muted); font-size: 11px;
       font-weight: 700; cursor: pointer; border-right: 1px solid var(--border);
     }
     nav button.active { color: var(--yellow); background: #111827; }
+    .flow-presets {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+      padding: 8px 10px; background: #05070a; border-bottom: 1px solid var(--border);
+    }
+    .flow-presets .mode-btn { padding: 8px 4px; font-size: 10px; }
+    .flow-controls {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end;
+      padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+    }
+    .flow-field { display: flex; flex-direction: column; gap: 2px; font-size: 9px; color: var(--muted); }
+    .flow-field input {
+      background: #05070a; border: 1px solid var(--border); color: #fff; font-size: 12px;
+      padding: 5px 6px; border-radius: 4px;
+    }
+    .flow-chip {
+      padding: 6px 8px; border: 1px solid var(--border); background: #05070a; color: var(--muted);
+      font-size: 10px; font-weight: 700; border-radius: 4px; cursor: pointer;
+    }
+    .flow-chip.on { background: var(--yellow); color: #000; border-color: var(--yellow); }
     .setup-box { padding: 20px; text-align: center; }
     .setup-box input {
       width: 100%; padding: 10px; margin: 10px 0; background: var(--panel);
@@ -141,7 +160,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.6</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.7</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -161,6 +180,7 @@
     <button id="tab-0dte" class="active" onclick="setTab('0dte')">0DTE MAP</button>
     <button id="tab-7dte" onclick="setTab('7dte')">SCANNERS</button>
     <button id="tab-weekly" onclick="setTab('weekly')">WEEKLY OPEX</button>
+    <button id="tab-flow" onclick="setTab('flow')">FLOW</button>
   </nav>
 
   <script>
@@ -276,7 +296,8 @@
 
     function renderPills() {
       const el = document.getElementById("tickerPills");
-      el.style.display = activeTab === "weekly" ? "none" : "flex";
+      const hide = activeTab === "weekly" || (activeTab === "flow" && flowPreset !== "unusual");
+      el.style.display = hide ? "none" : "flex";
       el.innerHTML = TICKERS.map(t =>
         `<button class="pill ${t === activeTicker ? 'active' : ''}" onclick="setTicker('${t}')">${t}</button>`
       ).join("");
@@ -284,7 +305,7 @@
 
     function setTab(tab) {
       activeTab = tab;
-      ["0dte", "7dte", "weekly"].forEach(t => {
+      ["0dte", "7dte", "weekly", "flow"].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle("active", t === tab);
       });
       renderPills();
@@ -455,6 +476,215 @@
         <div class="empty-msg" style="padding:6px 10px;font-size:10px;">% Mag = node size vs the magnet. Δ 1h = change in that share (points). Δ Day = change in |GEX| vs prior session. VEX Δ Day = change in |VEX| vs prior session. All values are one cumulative amount across every expiry.</div>`;
     }
 
+    // ---- FLOW tab: unusual options flow presets (bot: flow) ----
+    const FLOW_PRESETS = [
+      ["big", "BIG OPENERS"], ["unusual", "HOW UNUSUAL"], ["accum", "ACCUMULATION"], ["ivx", "IV INFLATION"],
+    ];
+    const FLOW_DEFAULTS = {
+      big: { minPrem: 500000, maxDte: 100, minAsk: 80, sizeOi: true, otm: true, single: true },
+      accum: { minDays: 3, minAsk: 0 },
+      ivx: { min: 1.3, max: 3, side: "all", sym: "ALL" },
+    };
+    let flowPreset = "big";
+    let flowFilters = JSON.parse(JSON.stringify(FLOW_DEFAULTS));
+    try {
+      const saved = JSON.parse(localStorage.getItem("gexvex_flow_filters") || "null");
+      if (saved) Object.keys(FLOW_DEFAULTS).forEach(k => Object.assign(flowFilters[k], saved[k] || {}));
+      flowPreset = localStorage.getItem("gexvex_flow_preset") || "big";
+    } catch (e) { /* storage blocked: defaults */ }
+
+    function saveFlowPrefs() {
+      try {
+        localStorage.setItem("gexvex_flow_filters", JSON.stringify(flowFilters));
+        localStorage.setItem("gexvex_flow_preset", flowPreset);
+      } catch (e) { /* ignore */ }
+    }
+    function setFlowPreset(p) { flowPreset = p; saveFlowPrefs(); renderPills(); renderView(); }
+    function setFlowFilter(group, key, val) {
+      const cur = flowFilters[group][key];
+      flowFilters[group][key] = typeof cur === "boolean" ? !!val
+        : typeof cur === "number" ? (val === "" || isNaN(Number(val)) ? FLOW_DEFAULTS[group][key] : Number(val)) : val;
+      saveFlowPrefs();
+      renderView();
+    }
+    function resetFlowFilters(group) {
+      flowFilters[group] = JSON.parse(JSON.stringify(FLOW_DEFAULTS[group]));
+      saveFlowPrefs();
+      renderView();
+    }
+
+    function fmtTimeEt(iso) {
+      if (!iso) return "—";
+      return new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+    function fmtNum(v) {
+      if (v === null || v === undefined || v === "" || isNaN(v)) return "—";
+      const n = Number(v);
+      if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + "M";
+      if (Math.abs(n) >= 1e4) return (n / 1e3).toFixed(1) + "K";
+      return n.toLocaleString("en-US");
+    }
+    function fmtContract(r, withSym = true) {
+      const t = r.type === "call" ? "C" : "P";
+      const exp = (r.expiry || "").slice(5).replace("-", "/");
+      return `${withSym && r.symbol ? `<strong>${r.symbol}</strong> ` : ""}<span class="${t === 'C' ? 'badge-call' : 'badge-put'}">${Number(r.strike)}${t}</span> <span style="color:#94a3b8;">${exp}</span>`;
+    }
+    function fmtAsk(v) {
+      if (v === null || v === undefined) return "—";
+      const n = Number(v);
+      const cls = n >= 80 ? "up" : n <= 30 ? "down" : "";
+      return `<span class="${cls}">${Math.round(n)}%</span>`;
+    }
+    function fmtIvx(v) {
+      if (v === null || v === undefined) return "—";
+      const n = Number(v);
+      const cls = n >= 1.3 ? "up" : n <= 0.8 ? "down" : "";
+      return `<span class="${cls}">${n.toFixed(2)}x</span>`;
+    }
+    function flowInput(group, key, label, step = "any", width = 70) {
+      return `<label class="flow-field"><span>${label}</span><input type="number" inputmode="decimal" step="${step}" value="${flowFilters[group][key]}" style="width:${width}px;" onchange="setFlowFilter('${group}','${key}',this.value)"></label>`;
+    }
+    function flowToggle(group, key, label) {
+      const on = flowFilters[group][key];
+      return `<button class="flow-chip ${on ? 'on' : ''}" onclick="setFlowFilter('${group}','${key}',${!on})">${on ? '✓ ' : ''}${label}</button>`;
+    }
+    function flowNote(text) { return `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">${text}</div>`; }
+
+    function passesBig(r, f) {
+      if (Number(r.premium) < f.minPrem) return false;
+      if (f.maxDte > 0 && (r.dte === null || r.dte === undefined || r.dte > f.maxDte)) return false;
+      if (f.otm && !r.otm) return false;
+      if (f.single && !r.single_leg) return false;
+      if (f.sizeOi && !(r.open_interest !== null && r.open_interest !== undefined && r.size > r.open_interest)) return false;
+      if (f.minAsk > 0 && (r.ask_pct === null || r.ask_pct === undefined || r.ask_pct < f.minAsk)) return false;
+      return true;
+    }
+
+    function renderFlowBig(fl) {
+      const f = flowFilters.big;
+      const all = Array.isArray(fl.big_opening) ? fl.big_opening : [];
+      const rows = all.filter(r => passesBig(r, f));
+      const controls = `<div class="flow-controls">
+          ${flowInput("big", "minPrem", "Min prem $", "50000", 90)}
+          ${flowInput("big", "maxDte", "Max DTE", "1", 55)}
+          ${flowInput("big", "minAsk", "Ask % ≥", "5", 50)}
+          ${flowToggle("big", "sizeOi", "Size > OI")}${flowToggle("big", "otm", "OTM only")}${flowToggle("big", "single", "Single leg")}
+          <button class="flow-chip" onclick="resetFlowFilters('big')">Reset</button>
+        </div>`;
+      const head = `<div class="section-head">LARGE UNUSUAL OPENING ORDERS<span class="sub">${rows.length}/${all.length} · all tickers</span></div>`;
+      if (rows.length === 0) {
+        return head + controls + `<div class="empty-msg">${all.length ? "No prints pass these filters yet today." : "No $500K+ opening prints yet today. The bot fills this every minute during market hours."}</div>`;
+      }
+      return head + controls + `<div class="matrix-scroll"><table>
+          <thead><tr><th>Time</th><th style="text-align:left;">Contract</th><th>DTE</th><th>Premium</th><th>Size / OI</th><th>Ask %</th><th>Side</th><th>OTM</th><th>IV×</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+              <td>${fmtTimeEt(r.time)}</td>
+              <td style="text-align:left;">${fmtContract(r)}</td>
+              <td>${r.dte ?? '—'}</td>
+              <td><strong>${fmtUsd(r.premium)}</strong></td>
+              <td>${fmtNum(r.size)} / ${fmtNum(r.open_interest)}</td>
+              <td>${fmtAsk(r.ask_pct)}</td>
+              <td class="${r.side === 'bought' ? 'up' : r.side === 'sold' ? 'down' : ''}">${r.side === 'bought' ? 'ASK' : r.side === 'sold' ? 'BID' : 'MID'}${r.kind === 'sweep' ? ' ⚡' : ''}</td>
+              <td>${r.otm_pct === null || r.otm_pct === undefined ? '—' : r.otm_pct.toFixed(1) + '%'}</td>
+              <td>${fmtIvx(r.iv_x)}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        + flowNote("$500K+ prints larger than the open interest (opening). Ask % = share of the contract's contracts traded at the ask today, from its $25K+ prints. Side = this print. ⚡ = sweep. IV× only for the bot's tickers.");
+    }
+
+    function renderFlowUnusual(fl) {
+      const t = fl.unusual?.[activeTicker] || {};
+      const head = (title, sub = "") => `<div class="section-head">${activeTicker} ${title}<span class="sub">${sub}</span></div>`;
+      const table = (rows, cols, why) => !Array.isArray(rows) || rows.length === 0
+        ? `<div class="empty-msg">${why}</div>`
+        : `<div class="matrix-scroll"><table><thead><tr><th>#</th><th style="text-align:left;">Contract</th>${cols.map(c => `<th>${c[0]}</th>`).join("")}</tr></thead>
+            <tbody>${rows.map((r, i) => `<tr><td>${i + 1}</td><td style="text-align:left;">${fmtContract(r, false)}</td>${cols.map(c => `<td>${c[1](r)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+      const vol = ["Vol", r => fmtNum(r.volume)], oi = ["OI", r => fmtNum(r.open_interest)];
+      const ratio = ["Vol/OI", r => r.vol_oi === null || r.vol_oi === undefined ? "—" : `<strong>${Number(r.vol_oi).toFixed(2)}</strong>`];
+      const ask = ["Ask %", r => fmtAsk(r.ask_pct)];
+      const chainWhy = "No chain data yet (filled with the magnet map every 15 min).";
+      const printWhy = "No $25K+ prints for this ticker yet today.";
+      return head("TOP VOLUME", fl.updated_at || "") + table(t.top_volume, [vol, oi, ratio, ask], chainWhy)
+        + head("TOP PREMIUM", "$25K+ prints") + table(t.top_premium, [["Premium", r => `<strong>${fmtUsd(r.premium)}</strong>`], ["Prints", r => r.prints], ask], printWhy)
+        + head("TOP OPEN INTEREST") + table(t.top_oi, [oi, vol, ratio], chainWhy)
+        + head("TOP SWEEP ACTIVITY", "$25K+ sweeps") + table(t.top_sweeps, [["Sweep $", r => `<strong>${fmtUsd(r.sweep_premium)}</strong>`], ["Sweeps", r => r.sweeps], ["Size", r => fmtNum(r.sweep_size)], ask], "No sweeps for this ticker yet today.")
+        + head("TOP VOL / OI", "vol ≥ 250") + table(t.top_vol_oi, [ratio, vol, oi, ask], chainWhy)
+        + flowNote("Volume, OI and Vol/OI cover strikes inside the magnet map window, out to 130 DTE. Premium and sweeps count today's $25K+ prints on every strike.");
+    }
+
+    function renderFlowAccum(fl) {
+      const f = flowFilters.accum;
+      const all = Array.isArray(fl.accumulation) ? fl.accumulation : [];
+      const rows = all.filter(r => r.days >= f.minDays && (f.minAsk <= 0 || (r.ask_pct !== null && r.ask_pct !== undefined && r.ask_pct >= f.minAsk)));
+      const sess = Array.isArray(fl.accumulation_sessions) ? fl.accumulation_sessions : [];
+      const controls = `<div class="flow-controls">${flowInput("accum", "minDays", "Days in a row ≥", "1", 50)}${flowInput("accum", "minAsk", "Ask % ≥", "5", 50)}
+          <button class="flow-chip" onclick="resetFlowFilters('accum')">Reset</button></div>`;
+      const head = `<div class="section-head">REPEATED ACCUMULATION (OI +30%/DAY)<span class="sub">${sess.length ? 'through ' + sess[sess.length - 1] : ''}</span></div>`;
+      if (rows.length === 0) {
+        return head + controls + `<div class="empty-msg">${all.length ? "No contracts meet these filters." : "No OI streaks found. The bot scans past sessions once a day."}</div>`;
+      }
+      return head + controls + `<div class="matrix-scroll"><table>
+          <thead><tr><th style="text-align:left;">Contract</th><th>Days</th><th>OI</th><th>OI Δ</th><th style="text-align:left;">Daily growth</th><th>Premium</th><th>Ask %</th><th>DTE</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+              <td style="text-align:left;">${fmtContract(r)}</td>
+              <td><strong>${r.days}</strong></td>
+              <td>${fmtNum(r.oi_start)} → ${fmtNum(r.oi_now)}</td>
+              <td class="up">${r.oi_growth_total_pct === null || r.oi_growth_total_pct === undefined ? 'new' : '+' + Math.round(r.oi_growth_total_pct) + '%'}</td>
+              <td style="text-align:left;">${(r.daily_growth_pct || []).map(g => g === null ? 'new' : '+' + Math.round(g) + '%').join(' · ')}</td>
+              <td>${fmtUsd(r.premium)}</td>
+              <td>${fmtAsk(r.ask_pct)}</td>
+              <td>${r.dte ?? '—'}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        + flowNote("Open interest grew 30%+ on each of the last N sessions (OI of 300+). Sources: the market's top 1,000 OI gainers per day plus the top 300 for each bot ticker. Ask % = share of the contract's $25K+ prints at the ask since the streak began (top 30 only). Premium and volume sum the streak days.");
+    }
+
+    function renderFlowIvx(fl) {
+      const f = flowFilters.ivx;
+      const all = Array.isArray(fl.iv_inflation) ? fl.iv_inflation : [];
+      const rows = all.filter(r => r.iv_x !== null && r.iv_x !== undefined
+        && (!f.min || r.iv_x >= f.min) && (!f.max || r.iv_x <= f.max)
+        && (f.side === "all" || r.type === f.side) && (f.sym === "ALL" || r.symbol === f.sym))
+        .sort((a, b) => b.iv_x - a.iv_x);
+      const chip = (key, val, label) => `<button class="flow-chip ${f[key] === val ? 'on' : ''}" onclick="setFlowFilter('ivx','${key}','${val}')">${label}</button>`;
+      const controls = `<div class="flow-controls">${flowInput("ivx", "min", "Min ×", "0.1", 50)}${flowInput("ivx", "max", "Max ×", "0.1", 50)}
+          ${chip("side", "all", "Calls + puts")}${chip("side", "call", "Calls")}${chip("side", "put", "Puts")}
+          ${chip("sym", "ALL", "All")}${(fl.symbols || TICKERS).map(s => chip("sym", s, s)).join("")}
+          <button class="flow-chip" onclick="resetFlowFilters('ivx')">Reset</button></div>`;
+      const base = fl.iv_baselines || {};
+      const baseLine = Object.keys(base).filter(s => base[s]?.call || base[s]?.put)
+        .map(s => `${s} C ${base[s].call ? (base[s].call * 100).toFixed(0) + '%' : '—'} / P ${base[s].put ? (base[s].put * 100).toFixed(0) + '%' : '—'}`).join(" · ");
+      const head = `<div class="section-head">IV INFLATION (TRADE IV ÷ BASELINE)<span class="sub">${rows.length}/${all.length}</span></div>`;
+      if (rows.length === 0) {
+        return head + controls + `<div class="empty-msg">${all.length ? "No prints in this range." : "No $100K+ prints with an IV baseline yet today."}</div>` + (baseLine ? flowNote("Baselines: " + baseLine) : "");
+      }
+      return head + controls + `<div class="matrix-scroll"><table>
+          <thead><tr><th>Time</th><th style="text-align:left;">Contract</th><th>IV×</th><th>IV</th><th>Premium</th><th>Side</th><th>Ask %</th><th>DTE</th><th>OTM</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+              <td>${fmtTimeEt(r.time)}</td>
+              <td style="text-align:left;">${fmtContract(r)}</td>
+              <td><strong>${fmtIvx(r.iv_x)}</strong></td>
+              <td>${r.iv ? (r.iv * 100).toFixed(0) + '%' : '—'}</td>
+              <td>${fmtUsd(r.premium)}</td>
+              <td class="${r.side === 'bought' ? 'up' : r.side === 'sold' ? 'down' : ''}">${r.side === 'bought' ? 'ASK' : r.side === 'sold' ? 'BID' : 'MID'}</td>
+              <td>${fmtAsk(r.ask_pct)}</td>
+              <td>${r.dte ?? '—'}</td>
+              <td>${r.otm_pct === null || r.otm_pct === undefined ? '—' : r.otm_pct.toFixed(1) + '%'}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        + flowNote("1.0 = normal, 1.5 = 50% richer than usual. Baseline = the ticker's volume-weighted median IV over the last 5 sessions, separately for calls and puts, by expiry (0-7 / 8-30 / 31-100 / 100+ DTE) and moneyness (ATM / 2-8% / 8%+ OTM). $100K+ prints, bot tickers. Overall bases: " + (baseLine || "none yet"));
+    }
+
+    function renderFlow() {
+      const fl = liveData.flow || {};
+      const tabs = `<div class="flow-presets">${FLOW_PRESETS.map(([k, label]) =>
+        `<button class="mode-btn ${flowPreset === k ? 'active' : ''}" onclick="setFlowPreset('${k}')">${label}</button>`).join("")}</div>`;
+      if (!liveData.flow) {
+        return tabs + `<div class="empty-msg">No flow data in gexvex_live.json yet. It appears once the updated bot runs during market hours.</div>`;
+      }
+      const body = flowPreset === "unusual" ? renderFlowUnusual(fl)
+        : flowPreset === "accum" ? renderFlowAccum(fl)
+        : flowPreset === "ivx" ? renderFlowIvx(fl) : renderFlowBig(fl);
+      return tabs + body;
+    }
+
     function renderView() {
       const box = document.getElementById("viewContainer");
       if (!liveData) {
@@ -569,6 +799,8 @@
           <div class="empty-msg" style="padding:6px 10px;font-size:10px;">👑 0DTE king · ♔ ghost = all-expiry magnet · dashed line = zero gamma flip (cumulative net GEX crosses zero) · dotted purple = expected move (ATM straddle) · CW/PW = call/put wall.</div>`;
       } else if (activeTab === "7dte") {
         box.innerHTML = renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
+      } else if (activeTab === "flow") {
+        box.innerHTML = renderFlow();
       } else {
         const w = liveData.weekly || {};
         const exps = Array.isArray(w.expiries) ? w.expiries : [];
