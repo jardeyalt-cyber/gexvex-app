@@ -94,6 +94,22 @@
     .badge-call { background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .badge-put { background: rgba(244, 63, 94, 0.2); color: #fb7185; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .magnet-flag { color: var(--yellow); font-weight: 700; }
+    .section-head {
+      padding: 8px 10px; background: #0a0e13; border-top: 1px solid #1d283b; border-bottom: 1px solid #1d283b;
+      font-size: 11px; font-weight: 700; color: #facc15; margin-top: 8px;
+      display: flex; justify-content: space-between; gap: 8px;
+    }
+    .section-head:first-child { margin-top: 0; border-top: none; }
+    .section-head .sub { color: var(--muted); font-weight: 400; }
+    .str-strong { color: #4ade80; font-weight: 700; }
+    .str-moderate { color: #facc15; font-weight: 700; }
+    .str-weak { color: #94a3b8; font-weight: 700; }
+    .up { color: #4ade80; }
+    .down { color: #fb7185; }
+    tr.active-row td { background: #111827; }
+    tr.magnet-row td { background: #1c1606; }
+    .matrix-scroll table:not(.matrix-table) th { position: static; }
+    .signal-cell { text-align: left; font-size: 10px; white-space: normal; min-width: 120px; }
     .empty-msg { padding: 18px 12px; color: var(--muted); font-size: 11px; border-bottom: 1px solid #111827; }
     nav {
       position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
@@ -115,7 +131,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.2</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.3</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -133,7 +149,7 @@
 
   <nav>
     <button id="tab-0dte" class="active" onclick="setTab('0dte')">0DTE MAP</button>
-    <button id="tab-7dte" onclick="setTab('7dte')">7DTE MAGNETS</button>
+    <button id="tab-7dte" onclick="setTab('7dte')">SCANNERS</button>
     <button id="tab-weekly" onclick="setTab('weekly')">WEEKLY OPEX</button>
   </nav>
 
@@ -276,6 +292,150 @@
       renderView();
     }
 
+    function renderScanner7dte() {
+      const sc = liveData.scanner_7dte || {};
+      const conf = Array.isArray(sc.confluence) ? sc.confluence : [];
+      const t5 = sc.top5?.[activeTicker];
+      const nodes = Array.isArray(t5?.nodes) ? t5.nodes : [];
+
+      let minG = 0, maxG = 0, minV = 0, maxV = 0;
+      [...conf, ...nodes].forEach(item => {
+        const g = Number(item.gex) || 0;
+        const v = Number(item.vex) || 0;
+        if (g < minG) minG = g;
+        if (g > maxG) maxG = g;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      });
+
+      return `
+        <div class="section-head">7DTE MAGNET CONFLUENCE (BY R:R)<span class="sub">${sc.updated_at || ''}</span></div>
+        ${conf.length === 0 ? `<div class="empty-msg">scanner_7dte.confluence is empty in gexvex_live.json.</div>` : `
+        <table>
+          <thead><tr><th>#</th><th>Sym</th><th>Strike</th><th>GEX</th><th>VEX</th><th>Contract</th><th>R:R</th></tr></thead>
+          <tbody>
+            ${conf.map((c, idx) => `
+              <tr>
+                <td>#${idx + 1}</td>
+                <td><strong>${c.ticker}</strong>${c.is_magnet ? ' 🧲' : ''}</td>
+                <td>$${c.strike} (${fmtPct(c.pct_dist, false)})</td>
+                <td style="${heatCellStyle(c.gex, minG, maxG)}">${fmtUsd(c.gex)}</td>
+                <td style="${heatCellStyle(c.vex, minV, maxV)}">${fmtUsd(c.vex)}</td>
+                <td><span class="${c.side === 'CALL' ? 'badge-call' : 'badge-put'}">${c.side}</span> ${c.price !== '' && c.price !== undefined ? '$' + Number(c.price).toFixed(2) : '—'}</td>
+                <td><strong>${c.rr ?? '—'}x</strong></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`}
+        <div class="section-head">${activeTicker} TOP-5 ~7DTE NODES (${t5?.expiry || '7DTE'})</div>
+        ${nodes.length === 0 ? `<div class="empty-msg">scanner_7dte.top5.${activeTicker}.nodes is empty in gexvex_live.json.</div>` : `
+        <table>
+          <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>Score</th><th>Side / Price</th><th>Flag</th></tr></thead>
+          <tbody>
+            ${nodes.map(n => `
+              <tr>
+                <td>$${n.strike}</td>
+                <td>${fmtPct(n.pct_dist, false)}</td>
+                <td style="${heatCellStyle(n.gex, minG, maxG)}">${fmtUsd(n.gex)}</td>
+                <td style="${heatCellStyle(n.vex, minV, maxV)}">${fmtUsd(n.vex)}</td>
+                <td>${n.confluence ?? '—'}</td>
+                <td><span class="${n.side === 'CALL' ? 'badge-call' : 'badge-put'}">${n.side}</span> ${n.price !== '' && n.price !== undefined ? '$' + Number(n.price).toFixed(2) : '—'}</td>
+                <td class="magnet-flag">${n.flag || '—'}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>`}`;
+    }
+
+    // ---- All-expiry magnet map (bot: magnet_map, open-interest GEX summed over every expiry) ----
+    function fmtSignedPct(v, digits = 0) {
+      if (v === null || v === undefined || v === "" || isNaN(v)) return "—";
+      const pct = Number(v) * 100;
+      const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
+      return `<span class="${cls}">${pct > 0 ? "+" : ""}${pct.toFixed(digits)}%</span>`;
+    }
+
+    function fmtStrike(v) {
+      return (v === null || v === undefined || v === "") ? "—" : `$${Number(v)}`;
+    }
+
+    function magnetNode(p) {
+      return (Array.isArray(p?.changes) ? p.changes : []).find(n => n.is_magnet) || null;
+    }
+
+    function renderMagnetMap() {
+      const mm = liveData.magnet_map || {};
+      const tk = mm.tickers || {};
+      const head = `<div class="section-head">ALL-EXPIRY MAGNETS<span class="sub">${mm.updated_at || ''}</span></div>`;
+      const syms = TICKERS.filter(t => tk[t]);
+      if (syms.length === 0) {
+        return head + `<div class="empty-msg">No magnet data yet. The bot fills this every 15 min during market hours.</div>`;
+      }
+      let minG = 0, maxG = 0;
+      syms.forEach(t => {
+        const g = Number(tk[t].gex) || 0;
+        if (g < minG) minG = g;
+        if (g > maxG) maxG = g;
+      });
+      const missing = TICKERS.filter(t => !tk[t]);
+      return head + `
+        <div class="matrix-scroll"><table>
+          <thead><tr><th>Sym</th><th>Spot</th><th>Magnet</th><th>Cum GEX</th><th>Strength</th><th>Led</th><th>Status</th></tr></thead>
+          <tbody>
+            ${syms.map(t => {
+              const p = tk[t];
+              const mn = magnetNode(p);
+              const moved = mn && /NEW/.test(mn.signal || "");
+              const str = String(p.strength || "").toLowerCase();
+              return `<tr class="${t === activeTicker ? 'active-row' : ''}" onclick="setTicker('${t}')" style="cursor:pointer;">
+                <td><strong>${t}</strong></td>
+                <td>$${Number(p.spot).toFixed(2)}</td>
+                <td class="magnet-flag">🧲 ${fmtStrike(p.magnet)} (${fmtPct(p.pct_dist)})</td>
+                <td style="${heatCellStyle(p.gex, minG, maxG)}">${fmtUsd(p.gex)}</td>
+                <td class="str-${str}">${p.strength || '—'}</td>
+                <td>${p.expiries_led ?? '—'}/${p.expiries_total ?? '—'}</td>
+                <td>${moved ? '🔄 ' + ((mn.signal.match(/NEW \(was [^)]*\)/) || ['NEW'])[0]) : 'HELD'}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table></div>
+        ${missing.length ? `<div class="empty-msg" style="padding:8px 10px;">No magnet for ${missing.join(", ")}${missing.includes("VIX") ? " (Tradytics has no VIX greeks)" : ""}.</div>` : ""}`;
+    }
+
+    // ---- Node growth: top nodes by cumulative |GEX| and how they changed vs the magnet ----
+    function renderNodeGrowth() {
+      const p = liveData.magnet_map?.tickers?.[activeTicker];
+      const head = `<div class="section-head">${activeTicker} NODE GROWTH VS MAGNET${p ? `<span class="sub">magnet ${fmtStrike(p.magnet)}</span>` : ''}</div>`;
+      const nodes = Array.isArray(p?.changes) ? p.changes : [];
+      if (nodes.length === 0) {
+        const why = activeTicker === "VIX" ? "VIX has no magnet data (Tradytics has no VIX greeks)." : `No node data for ${activeTicker} yet.`;
+        return head + `<div class="empty-msg">${why}</div>`;
+      }
+      let minG = 0, maxG = 0;
+      nodes.forEach(n => {
+        const g = Number(n.gex) || 0;
+        if (g < minG) minG = g;
+        if (g > maxG) maxG = g;
+      });
+      return head + `
+        <div class="matrix-scroll"><table>
+          <thead><tr><th>#</th><th>Strike</th><th>Cum GEX</th><th>% Mag</th><th>Δ 1h</th><th>Δ Day</th><th style="text-align:left;">Signal</th></tr></thead>
+          <tbody>
+            ${nodes.map(n => `
+              <tr class="${n.is_magnet ? 'magnet-row' : ''}">
+                <td>${n.rank}</td>
+                <td>${fmtStrike(n.strike)} <span style="color:#94a3b8;">(${fmtPct(n.pct_dist)})</span></td>
+                <td style="${heatCellStyle(n.gex, minG, maxG)}">${fmtUsd(n.gex)}</td>
+                <td>${n.share !== undefined ? Math.round(Number(n.share) * 100) + '%' : '—'}</td>
+                <td>${n.share_change_1h === null || n.share_change_1h === undefined ? '—' : `<span class="${n.share_change_1h > 0 ? 'up' : n.share_change_1h < 0 ? 'down' : ''}">${n.share_change_1h > 0 ? '+' : ''}${Math.round(n.share_change_1h * 100)}pt</span>`}</td>
+                <td>${fmtSignedPct(n.gex_change_session)}</td>
+                <td class="signal-cell">${n.signal || '—'}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table></div>
+        <div class="empty-msg" style="padding:6px 10px;font-size:10px;">% Mag = node size vs the magnet. Δ 1h = change in that share (points). Δ Day = change in |GEX| vs prior session.</div>`;
+    }
+
     function renderView() {
       const box = document.getElementById("viewContainer");
       if (!liveData) {
@@ -324,62 +484,7 @@
             </tbody>
           </table>`;
       } else if (activeTab === "7dte") {
-        const sc = liveData.scanner_7dte || {};
-        const conf = Array.isArray(sc.confluence) ? sc.confluence : [];
-        const t5 = sc.top5?.[activeTicker];
-        const nodes = Array.isArray(t5?.nodes) ? t5.nodes : [];
-
-        let minG = 0, maxG = 0, minV = 0, maxV = 0;
-        [...conf, ...nodes].forEach(item => {
-          const g = Number(item.gex) || 0;
-          const v = Number(item.vex) || 0;
-          if (g < minG) minG = g;
-          if (g > maxG) maxG = g;
-          if (v < minV) minV = v;
-          if (v > maxV) maxV = v;
-        });
-
-        box.innerHTML = `
-          <div style="padding:8px 10px;background:#0a0e13;border-bottom:1px solid #1d283b;font-size:11px;font-weight:700;color:#facc15;">
-            MAGNET CONFLUENCE RANKING (BY R:R)
-          </div>
-          ${conf.length === 0 ? `<div class="empty-msg">scanner_7dte.confluence is empty in gexvex_live.json.</div>` : `
-          <table>
-            <thead><tr><th>#</th><th>Sym</th><th>Strike</th><th>GEX</th><th>VEX</th><th>Contract</th><th>R:R</th></tr></thead>
-            <tbody>
-              ${conf.map((c, idx) => `
-                <tr>
-                  <td>#${idx + 1}</td>
-                  <td><strong>${c.ticker}</strong>${c.is_magnet ? ' 🧲' : ''}</td>
-                  <td>$${c.strike} (${fmtPct(c.pct_dist, false)})</td>
-                  <td style="${heatCellStyle(c.gex, minG, maxG)}">${fmtUsd(c.gex)}</td>
-                  <td style="${heatCellStyle(c.vex, minV, maxV)}">${fmtUsd(c.vex)}</td>
-                  <td><span class="${c.side === 'CALL' ? 'badge-call' : 'badge-put'}">${c.side}</span> ${c.price !== '' && c.price !== undefined ? '$' + Number(c.price).toFixed(2) : '—'}</td>
-                  <td><strong>${c.rr ?? '—'}x</strong></td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>`}
-          <div style="padding:8px 10px;background:#0a0e13;border-top:1px solid #1d283b;border-bottom:1px solid #1d283b;font-size:11px;font-weight:700;margin-top:8px;">
-            ${activeTicker} TOP-5 ~7DTE NODES (${t5?.expiry || '7DTE'})
-          </div>
-          ${nodes.length === 0 ? `<div class="empty-msg">scanner_7dte.top5.${activeTicker}.nodes is empty in gexvex_live.json.</div>` : `
-          <table>
-            <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>Score</th><th>Side / Price</th><th>Flag</th></tr></thead>
-            <tbody>
-              ${nodes.map(n => `
-                <tr>
-                  <td>$${n.strike}</td>
-                  <td>${fmtPct(n.pct_dist, false)}</td>
-                  <td style="${heatCellStyle(n.gex, minG, maxG)}">${fmtUsd(n.gex)}</td>
-                  <td style="${heatCellStyle(n.vex, minV, maxV)}">${fmtUsd(n.vex)}</td>
-                  <td>${n.confluence ?? '—'}</td>
-                  <td><span class="${n.side === 'CALL' ? 'badge-call' : 'badge-put'}">${n.side}</span> ${n.price !== '' && n.price !== undefined ? '$' + Number(n.price).toFixed(2) : '—'}</td>
-                  <td class="magnet-flag">${n.flag || '—'}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>`}`;
+        box.innerHTML = renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
       } else {
         const w = liveData.weekly || {};
         const exps = Array.isArray(w.expiries) ? w.expiries : [];
