@@ -8,6 +8,9 @@
   <meta name="theme-color" content="#0a0e13" />
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon-32.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-title" content="GexVex" />
   <title>GexVex Live</title>
   <link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
@@ -476,6 +479,12 @@
 
     renderPills();
     fetchLive();
+
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("Service worker not registered:", e));
+      });
+    }
   </script>
 </body>
 </html>
