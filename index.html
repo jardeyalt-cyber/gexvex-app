@@ -205,7 +205,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.1</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.2</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -233,11 +233,13 @@
     let activeTab = "0dte";
     let activeTicker = "SPY";
     let weeklyMode = "gex";
+    const WEEKLY_TICKERS = ["SPY", "QQQ", "SPX", "SMH", "TSLA", "AAPL", "NVDA", "VIX"];
     const ZERO_TICKERS = ["SPY", "SPX", "QQQ", "SMH", "VIX", "TSLA", "AAPL", "NVDA"];
     const TRINITY = ["SPY", "SPX", "QQQ"];
     const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
     const savePref = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
     let zeroView = pref("gexvex_zero_view", "TRINITY");  // "TRINITY" or one 0DTE ticker
+    let weeklyTicker = pref("gexvex_weekly_ticker", "SPY");
     let deltaTf = pref("gexvex_delta_tf", "10m");        // % change badges on nodes: "10m" | "1h"
     let triGreek = pref("gexvex_tri_greek", "gex");      // what the Trinity columns show
     let liveData = null;
@@ -355,10 +357,11 @@
 
     function renderPills() {
       const el = document.getElementById("tickerPills");
-      const hide = activeTab === "weekly" || (activeTab === "flow" && flowPreset !== "unusual");
+      const hide = activeTab === "flow" && flowPreset !== "unusual";
       el.style.display = hide ? "none" : "flex";
-      const list = activeTab === "0dte" ? ["TRINITY", ...ZERO_TICKERS] : TICKERS;
-      const cur = activeTab === "0dte" ? zeroView : activeTicker;
+      const list = activeTab === "0dte" ? ["TRINITY", ...ZERO_TICKERS]
+        : activeTab === "weekly" ? weeklyTickers() : TICKERS;
+      const cur = activeTab === "0dte" ? zeroView : activeTab === "weekly" ? weeklyTicker : activeTicker;
       el.innerHTML = list.map(t =>
         `<button class="pill ${t === cur ? 'active' : ''}" onclick="setTicker('${t}')">${t}</button>`
       ).join("");
@@ -378,6 +381,9 @@
         zeroView = t;
         savePref("gexvex_zero_view", t);
         if (TICKERS.includes(t)) activeTicker = t;
+      } else if (activeTab === "weekly") {
+        weeklyTicker = t;
+        savePref("gexvex_weekly_ticker", t);
       } else {
         activeTicker = t;
       }
@@ -604,6 +610,18 @@
         </div>
         <div class="tri-grid">${cols.join("")}</div>
         ${ZERO_LEGEND}`;
+    }
+
+    // Buttons follow the bot's list once it sends one; until then, the watchlist.
+    function weeklyTickers() {
+      const s = liveData && liveData.weekly && liveData.weekly.symbols;
+      return Array.isArray(s) && s.length ? s : WEEKLY_TICKERS;
+    }
+
+    function weeklyData(sym) {
+      const w = (liveData && liveData.weekly) || {};
+      if (w.by_symbol && w.by_symbol[sym]) return w.by_symbol[sym];
+      return sym === "SPY" ? w : null;  // older bot: top level is SPY only
     }
 
     function setWeeklyMode(mode) {
@@ -1069,7 +1087,7 @@
       } else if (activeTab === "flow") {
         box.innerHTML = renderFlow();
       } else {
-        const w = liveData.weekly || {};
+        const w = weeklyData(weeklyTicker) || {};
         const exps = Array.isArray(w.expiries) ? w.expiries : [];
         const strikes = Array.isArray(w.strikes) ? w.strikes : [];
         const matrix = weeklyMode === "vex" ? w.vex : w.gex;
@@ -1081,7 +1099,11 @@
           </div>`;
 
         if (strikes.length === 0 || exps.length === 0 || !Array.isArray(matrix)) {
-          box.innerHTML = `${toggleHeader}<div class="empty-msg">Weekly ${weeklyMode.toUpperCase()} matrix is empty in gexvex_live.json.</div>`;
+          const why = weeklyTicker === "VIX" ? "Tradytics sends no greeks for VIX, so this stays empty."
+            : !(liveData.weekly || {}).by_symbol && weeklyTicker !== "SPY"
+              ? `${weeklyTicker} appears after the updated bot's next weekly run (every 5 min in market hours).`
+              : `The weekly ${weeklyMode.toUpperCase()} matrix for ${weeklyTicker} is empty in gexvex_live.json.`;
+          box.innerHTML = `${toggleHeader}<div class="empty-msg">${why}</div>`;
           return;
         }
 
@@ -1104,8 +1126,8 @@
         box.innerHTML = `
           ${toggleHeader}
           <div class="summary-bar">
-            <div class="stat"><span>SPY SPOT</span><strong>$${Number(w.spot || 0).toFixed(2)}</strong></div>
-            <div class="stat"><span>LOOKAHEAD</span><strong>${exps.length} DAYS</strong></div>
+            <div class="stat"><span>${weeklyTicker} SPOT</span><strong>$${Number(w.spot || 0).toFixed(2)}</strong></div>
+            <div class="stat"><span>EXPIRIES</span><strong>${exps.length}</strong></div>
             <div class="stat"><span>MODE</span><strong>${weeklyMode.toUpperCase()} MATRIX</strong></div>
           </div>
           <div class="matrix-scroll">
