@@ -3,7 +3,7 @@
 // and opens even on a flaky connection. Live data is never cached: requests to
 // other origins (the GitHub Gist API, Google Fonts) go straight to the network.
 // Bump CACHE_VERSION whenever you want installed phones to drop old files.
-const CACHE_VERSION = "gexvex-v9";
+const CACHE_VERSION = "gexvex-v10";
 const SHELL = [
   "./",
   "./index.html",
