@@ -89,8 +89,9 @@
       padding: 7px 6px; border-bottom: 1px solid #111827; border-right: 1px solid #0f172a;
       text-align: right; white-space: nowrap;
     }
-    tr.spot-row td { background: #ffffff !important; color: #000000 !important; font-weight: 700; }
-    .king-cell { font-size: 12px; font-weight: 700; }
+    table:not(.hs) tr.spot-row td { background: #ffffff !important; color: #000000 !important; font-weight: 700; }
+    table.hs tr.spot-row td.node { font-weight: 800; }
+    .king-cell { font-weight: 700; }
     .badge-call { background: rgba(34, 197, 94, 0.2); color: #4ade80; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .badge-put { background: rgba(244, 63, 94, 0.2); color: #fb7185; padding: 2px 5px; border-radius: 3px; font-weight: 700; }
     .magnet-flag { color: var(--yellow); font-weight: 700; }
@@ -116,8 +117,34 @@
     .levels-bar { padding: 4px 10px 6px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); white-space: nowrap; overflow-x: auto; }
     .lvl-flip { color: #38bdf8; }
     .lvl-em { color: #a78bfa; }
-    .delta-toggle button { background: transparent; color: var(--muted); border: 1px solid var(--border); font: inherit; font-size: 9px; padding: 0 4px; cursor: pointer; }
-    .delta-toggle button.on { background: var(--yellow); color: #000; border-color: var(--yellow); }
+    /* Heat-seeker style node tables */
+    .hs-controls { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #05070a; border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); }
+    .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .seg button { background: var(--panel); color: var(--muted); border: none; font: inherit; font-size: 11px; font-weight: 700; padding: 4px 10px; cursor: pointer; }
+    .seg button.on { background: var(--yellow); color: #000; }
+    table.hs { table-layout: fixed; }
+    table.hs th { padding: 5px 6px; }
+    table.hs td { padding: 5px 6px; border-bottom: 1px solid rgba(0,0,0,0.45); border-right: none; }
+    table.hs td.strike { background: #07090d; color: #cbd5e1; text-align: left; font-weight: 600; }
+    table.hs td.strike .sp { display: inline-block; background: #fff; color: #000; font-weight: 700; padding: 0 9px 0 4px; clip-path: polygon(0 0, 78% 0, 100% 50%, 78% 100%, 0 100%); }
+    .nc { display: flex; justify-content: space-between; align-items: center; gap: 3px; }
+    .nc .nv { margin-left: auto; }
+    .dbadge { font-size: 8px; font-weight: 700; padding: 0 2px; border-radius: 2px; background: rgba(0,0,0,0.55); line-height: 1.4; }
+    .dbadge.dup { color: #4ade80; }
+    .dbadge.ddn { color: #f87171; }
+    .tri-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; background: #000; }
+    .tri-col { min-width: 0; }
+    .tri-head { background: var(--panel); border-bottom: 1px solid var(--border); padding: 5px 4px; font-size: 10px; line-height: 1.45; position: sticky; top: 42px; z-index: 5; }
+    .tri-head b { color: #fff; font-size: 11px; }
+    .tri-head .muted { color: var(--muted); font-size: 9px; }
+    .tri-head .kdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #fde725; margin-right: 3px; vertical-align: 1px; }
+    table.tri { font-size: 9px; }
+    table.tri td { padding: 5px 2px; overflow: hidden; }
+    table.tri td.strike { width: 31%; font-size: 9px; padding-left: 3px; }
+    table.tri .nc { gap: 1px; }
+    table.tri td.strike .sp { padding: 0 7px 0 2px; }
+    table.tri .dbadge { font-size: 7px; padding: 0 1px; letter-spacing: -0.3px; }
+    tr.pad td { background: #000 !important; border-bottom-color: #000; }
     .wall-cw { background: #14532d; color: #86efac; }
     .wall-pw { background: #7f1d1d; color: #fecaca; }
     .regime-neg { color: #fb7185; }
@@ -163,7 +190,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.8</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.9</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -191,7 +218,13 @@
     let activeTab = "0dte";
     let activeTicker = "SPY";
     let weeklyMode = "gex";
-    let deltaMode = "vex";  // which % change the 0DTE 10m / 1h columns show
+    const ZERO_TICKERS = ["SPY", "SPX", "QQQ", "SMH", "VIX", "TSLA", "AAPL", "NVDA"];
+    const TRINITY = ["SPY", "SPX", "QQQ", "VIX"];
+    const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
+    const savePref = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+    let zeroView = pref("gexvex_zero_view", "TRINITY");  // "TRINITY" or one 0DTE ticker
+    let deltaTf = pref("gexvex_delta_tf", "10m");        // % change badges on nodes: "10m" | "1h"
+    let triGreek = pref("gexvex_tri_greek", "gex");      // what the Trinity columns show
     let liveData = null;
     let lastError = "";
     let countdown = 30;
@@ -277,33 +310,42 @@
       return `${sign}${pct.toFixed(1)}%`;
     }
 
-    function heatCellStyle(val, minNeg, maxPos) {
-      const n = Number(val) || 0;
-      let r = 35, g = 79, b = 110;
-      let textColor = "#e5e7eb";
+    // Viridis scale: big negative = deep purple, ~zero = teal, big positive = lime, king = yellow.
+    const VIRIDIS = [[68,1,84],[72,36,117],[65,68,135],[53,95,141],[42,120,142],[33,145,140],[34,168,132],[68,191,112],[122,209,81],[189,223,38],[253,231,37]];
+    function viridis(x) {
+      x = Math.max(0, Math.min(1, x));
+      const f = x * 10, i = Math.min(9, Math.floor(f)), t = f - i, lo = VIRIDIS[i], hi = VIRIDIS[i + 1];
+      return lo.map((v, j) => Math.round(v + (hi[j] - v) * t));
+    }
 
-      if (n < 0 && minNeg < 0) {
-        const t = Math.min(1, Math.abs(n) / Math.abs(minNeg));
-        r = Math.round(35 + (126 - 35) * t);
-        g = Math.round(79 + (34 - 79) * t);
-        b = Math.round(110 + (206 - 110) * t);
-        textColor = t > 0.45 ? "#f3e8ff" : "#e5e7eb";
-      } else if (n > 0 && maxPos > 0) {
-        const t = Math.min(1, n / maxPos);
-        r = Math.round(35 + (250 - 35) * t);
-        g = Math.round(79 + (204 - 79) * t);
-        b = Math.round(110 + (21 - 110) * t);
-        textColor = t > 0.58 ? "#000000" : "#fef08a";
-      }
+    function heatCellStyle(val, minNeg, maxPos, king = false) {
+      if (king) return "background-color:#fde725;color:#000000;font-weight:800;";
+      const n = Number(val) || 0;
+      let x = 0.45;
+      if (n < 0 && minNeg < 0) x = 0.45 - 0.45 * Math.pow(Math.min(1, n / minNeg), 0.6);
+      else if (n > 0 && maxPos > 0) x = 0.45 + 0.47 * Math.pow(Math.min(1, n / maxPos), 0.6);
+      const [r, g, b] = viridis(x);
+      const textColor = x > 0.84 ? "#000000" : "#ffffff";
       return `background-color:rgb(${r},${g},${b});color:${textColor};font-weight:${n !== 0 ? 600 : 400};`;
+    }
+
+    function fmtUsdShort(v) {
+      if (v === "" || v === null || v === undefined || isNaN(v)) return "—";
+      const n = Number(v), sign = n < 0 ? "-" : "", av = Math.abs(n);
+      if (av >= 1e9) return `${sign}$${(av / 1e9).toFixed(1)}B`;
+      if (av >= 1e6) return `${sign}$${(av / 1e6).toFixed(1)}M`;
+      if (av >= 1e3) return `${sign}$${(av / 1e3).toFixed(0)}K`;
+      return `${sign}$${av.toFixed(0)}`;
     }
 
     function renderPills() {
       const el = document.getElementById("tickerPills");
       const hide = activeTab === "weekly" || (activeTab === "flow" && flowPreset !== "unusual");
       el.style.display = hide ? "none" : "flex";
-      el.innerHTML = TICKERS.map(t =>
-        `<button class="pill ${t === activeTicker ? 'active' : ''}" onclick="setTicker('${t}')">${t}</button>`
+      const list = activeTab === "0dte" ? ["TRINITY", ...ZERO_TICKERS] : TICKERS;
+      const cur = activeTab === "0dte" ? zeroView : activeTicker;
+      el.innerHTML = list.map(t =>
+        `<button class="pill ${t === cur ? 'active' : ''}" onclick="setTicker('${t}')">${t}</button>`
       ).join("");
     }
 
@@ -317,14 +359,153 @@
     }
 
     function setTicker(t) {
-      activeTicker = t;
+      if (activeTab === "0dte") {
+        zeroView = t;
+        savePref("gexvex_zero_view", t);
+        if (TICKERS.includes(t)) activeTicker = t;
+      } else {
+        activeTicker = t;
+      }
       renderPills();
       renderView();
     }
 
-    function setDeltaMode(mode) {
-      deltaMode = mode;
+    function setDeltaTf(tf) {
+      deltaTf = tf;
+      savePref("gexvex_delta_tf", tf);
       renderView();
+    }
+
+    function setTriGreek(g) {
+      triGreek = g;
+      savePref("gexvex_tri_greek", g);
+      renderView();
+    }
+
+    // Everything the 0DTE views need for one ticker, or null when it has no rows.
+    function zeroData(sym) {
+      const d = liveData.zero_dte?.tickers?.[sym];
+      if (!d || !Array.isArray(d.rows) || d.rows.length === 0) return null;
+      let spotIdx = -1, minDiff = Infinity, minGex = 0, maxGex = 0, minVex = 0, maxVex = 0;
+      d.rows.forEach((r, i) => {
+        const diff = Math.abs(Number(r.strike) - Number(d.spot));
+        if (diff < minDiff) { minDiff = diff; spotIdx = i; }
+        const g = Number(r.gex) || 0, v = Number(r.vex) || 0;
+        minGex = Math.min(minGex, g); maxGex = Math.max(maxGex, g);
+        minVex = Math.min(minVex, v); maxVex = Math.max(maxVex, v);
+      });
+      const num = v => (v === null || v === undefined || v === "") ? NaN : Number(v);
+      const ok = v => Number.isFinite(v) && v > 0;
+      const spotNum = Number(d.spot);
+      const flip = num(d.flip), em = num(d.exp_move), cw = num(d.call_wall), pw = num(d.put_wall);
+      const ghost = num(liveData.magnet_map?.tickers?.[sym]?.magnet);
+      // Rows run high to low. A level sits on the top border of the first row below it.
+      const edgeIdx = lvl => ok(lvl) ? d.rows.findIndex(r => Number(r.strike) < lvl) : -1;
+      const fi = edgeIdx(flip);
+      const emIdx = new Set(ok(em) ? [edgeIdx(spotNum + em), edgeIdx(spotNum - em)].filter(i => i > 0) : []);
+      return { d, spotIdx, minGex, maxGex, minVex, maxVex, spotNum, flip, em, cw, pw, ghost, ok,
+               flipIdx: fi > 0 ? fi : -1, emIdx };
+    }
+
+    // Small % change badge drawn on a node (Heat-seeker style). Hidden under 1%.
+    function deltaBadge(v, short = false) {
+      if (v === "" || v === null || v === undefined || typeof v === "string") return "";
+      const n = Number(v) * 100;
+      if (!Number.isFinite(n) || Math.abs(n) < 1) return "";
+      const txt = (short || Math.abs(n) >= 100) ? n.toFixed(0) : n.toFixed(1);
+      return `<span class="dbadge ${n > 0 ? 'dup' : 'ddn'}">${n > 0 ? '+' : ''}${txt}%</span>`;
+    }
+
+    function nodeCell(val, marker, delta, mn, mx, short) {
+      const king = marker === "👑";
+      return `<td class="node${king ? ' king-cell' : ''}" style="${heatCellStyle(val, mn, mx, king)}"><div class="nc">${deltaBadge(delta, short)}<span class="nv">${short ? fmtUsdShort(val) : fmtUsd(val)}${king ? (short ? '★' : ' ★') : ''}</span></div></td>`;
+    }
+
+    function strikeCell(z, r, i, small) {
+      const k = Number(r.strike);
+      const tags = (z.ok(z.ghost) && k === z.ghost ? ' <span class="ghost-tag" title="All-expiry magnet">♔</span>' : '') +
+        (!small && z.ok(z.cw) && k === z.cw ? ' <span class="wall-tag wall-cw">CW</span>' : '') +
+        (!small && z.ok(z.pw) && k === z.pw ? ' <span class="wall-tag wall-pw">PW</span>' : '');
+      const label = small ? `${r.strike}` : `$${r.strike}`;
+      return `<td class="strike">${i === z.spotIdx ? `<span class="sp">${label}</span>` : label}${tags}</td>`;
+    }
+
+    function rowClass(z, i) {
+      return `${i === z.spotIdx ? 'spot-row' : ''} ${i === z.flipIdx ? 'flip-edge' : ''} ${z.emIdx.has(i) ? 'em-edge' : ''}`;
+    }
+
+    function tfSwitch() {
+      return `<span class="seg"><button class="${deltaTf === '10m' ? 'on' : ''}" onclick="setDeltaTf('10m')">10m</button><button class="${deltaTf === '1h' ? 'on' : ''}" onclick="setDeltaTf('1h')">1h</button></span>`;
+    }
+
+    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more).</div>`;
+
+    function renderZeroDte(sym) {
+      const z = zeroData(sym);
+      if (!z) return `<div class="empty-msg">No 0DTE rows for ${sym} in gexvex_live.json.</div>`;
+      const { d } = z;
+      const regimeCls = (d.regime || "").startsWith("+") ? "regime-pos" : "regime-neg";
+      const lvl = [
+        z.ok(z.flip) ? `<span class="lvl-flip">0γ $${z.flip.toFixed(2)}</span>${d.regime ? ` <span class="${regimeCls}">${d.regime}</span>` : ''}` : '',
+        z.ok(z.ghost) ? `<span class="ghost-tag">♔ $${z.ghost}</span>` : '',
+        z.ok(z.cw) ? `<span class="up">CW $${z.cw}</span>` : '',
+        z.ok(z.pw) ? `<span class="down">PW $${z.pw}</span>` : '',
+        z.ok(z.em) ? `<span class="lvl-em">EM ±$${z.em.toFixed(2)}</span>` : '',
+      ].filter(Boolean).join(' · ');
+      const g = deltaTf === "10m" ? "g10" : "g1h", v = deltaTf === "10m" ? "v10" : "v1h";
+      return `
+        <div class="summary-bar">
+          <div class="stat"><span>SPOT (${d.label || "0DTE"})</span><strong>$${z.spotNum.toFixed(2)}</strong></div>
+          <div class="stat"><span>NET GEX</span><strong>${fmtUsd(d.total_gex)}</strong></div>
+          <div class="stat"><span>NET VEX</span><strong>${fmtUsd(d.total_vex)}</strong></div>
+        </div>
+        ${lvl ? `<div class="levels-bar">${lvl}</div>` : ''}
+        <div class="hs-controls">% change ${tfSwitch()}</div>
+        <table class="hs">
+          <thead><tr><th style="width:30%;text-align:left;">Strike</th><th>Net GEX</th><th>Net VEX</th></tr></thead>
+          <tbody>
+            ${d.rows.map((r, i) => `
+              <tr class="${rowClass(z, i)}">
+                ${strikeCell(z, r, i, false)}
+                ${nodeCell(r.gex, r.gm, r[g], z.minGex, z.maxGex, false)}
+                ${nodeCell(r.vex, r.vm, r[v], z.minVex, z.maxVex, false)}
+              </tr>`).join("")}
+          </tbody>
+        </table>
+        ${ZERO_LEGEND}`;
+    }
+
+    // Trinity: SPY / SPX / QQQ / VIX side by side, spot rows lined up.
+    function renderTrinity() {
+      const isG = triGreek === "gex";
+      const key = isG ? "gex" : "vex", mk = isG ? "gm" : "vm";
+      const dk = isG ? (deltaTf === "10m" ? "g10" : "g1h") : (deltaTf === "10m" ? "v10" : "v1h");
+      const panels = TRINITY.map(sym => ({ sym, z: zeroData(sym) }));
+      const maxSpot = Math.max(0, ...panels.map(p => p.z ? p.z.spotIdx : 0));
+      const cols = panels.map(({ sym, z }) => {
+        if (!z) return `<div class="tri-col"><div class="tri-head"><b>${sym}</b><br><span class="muted">no data yet</span></div></div>`;
+        const { d } = z;
+        const mn = isG ? z.minGex : z.minVex, mx = isG ? z.maxGex : z.maxVex;
+        const king = d.rows.find(r => r[mk] === "👑");
+        const kd = king && typeof king[dk] !== "string" ? Number(king[dk]) * 100 : NaN;
+        const kChg = Number.isFinite(kd) ? `<span class="${kd >= 0 ? 'up' : 'down'}">${kd >= 0 ? '↑' : '↓'}${Math.abs(kd).toFixed(1)}%</span>` : '';
+        const pad = '<tr class="pad"><td class="strike">&nbsp;</td><td></td></tr>'.repeat(Math.max(0, maxSpot - z.spotIdx));
+        return `<div class="tri-col">
+          <div class="tri-head"><b>${sym}</b>${d.label && d.label !== "0DTE" ? ` <span class="muted">${d.label}</span>` : ''}<br>
+            $${z.spotNum.toFixed(2)}<br>
+            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}</div>
+          <table class="hs tri"><tbody>${pad}
+            ${d.rows.map((r, i) => `<tr class="${rowClass(z, i)}">${strikeCell(z, r, i, true)}${nodeCell(r[key], r[mk], r[dk], mn, mx, true)}</tr>`).join("")}
+          </tbody></table>
+        </div>`;
+      });
+      return `
+        <div class="hs-controls">
+          <span class="seg"><button class="${isG ? 'on' : ''}" onclick="setTriGreek('gex')">GEX</button><button class="${isG ? '' : 'on'}" onclick="setTriGreek('vex')">VEX</button></span>
+          ${tfSwitch()}
+        </div>
+        <div class="tri-grid">${cols.join("")}</div>
+        ${ZERO_LEGEND}`;
     }
 
     function setWeeklyMode(mode) {
@@ -702,75 +883,7 @@
       }
 
       if (activeTab === "0dte") {
-        const d = liveData.zero_dte?.tickers?.[activeTicker];
-        if (!d || !Array.isArray(d.rows) || d.rows.length === 0) {
-          box.innerHTML = `<div class="empty-msg">No 0DTE rows for ${activeTicker} in gexvex_live.json.</div>`;
-          return;
-        }
-        let spotIdx = -1, minDiff = Infinity;
-        let minGex = 0, maxGex = 0, minVex = 0, maxVex = 0;
-        d.rows.forEach((r, i) => {
-          const diff = Math.abs(Number(r.strike) - Number(d.spot));
-          if (diff < minDiff) { minDiff = diff; spotIdx = i; }
-          const g = Number(r.gex) || 0;
-          const v = Number(r.vex) || 0;
-          if (g < minGex) minGex = g;
-          if (g > maxGex) maxGex = g;
-          if (v < minVex) minVex = v;
-          if (v > maxVex) maxVex = v;
-        });
-
-        // Levels: zero gamma flip, expected move (spot ± ATM straddle), walls, ghost (all-expiry magnet).
-        const num = v => (v === null || v === undefined || v === "") ? NaN : Number(v);
-        const spotNum = Number(d.spot);
-        const flip = num(d.flip), em = num(d.exp_move);
-        const cw = num(d.call_wall), pw = num(d.put_wall);
-        const ghost = num(liveData.magnet_map?.tickers?.[activeTicker]?.magnet);
-        const ok = v => Number.isFinite(v) && v > 0;
-        const emHi = ok(em) ? spotNum + em : NaN, emLo = ok(em) ? spotNum - em : NaN;
-
-        // Rows run high to low. A level sits on the top border of the first row below it.
-        const edgeIdx = lvl => ok(lvl) ? d.rows.findIndex(r => Number(r.strike) < lvl) : -1;
-        const flipIdx = edgeIdx(flip) > 0 ? edgeIdx(flip) : -1;
-        const emIdx = new Set([edgeIdx(emHi), edgeIdx(emLo)].filter(i => i > 0));
-
-        const strikeTags = k =>
-          (ok(ghost) && k === ghost ? ' <span class="ghost-tag" title="All-expiry magnet">♔</span>' : '') +
-          (ok(cw) && k === cw ? ' <span class="wall-tag wall-cw">CW</span>' : '') +
-          (ok(pw) && k === pw ? ' <span class="wall-tag wall-pw">PW</span>' : '');
-        const dG = deltaMode === "gex";
-        const regimeCls = (d.regime || "").startsWith("+") ? "regime-pos" : "regime-neg";
-        const lvl = [
-          ok(flip) ? `<span class="lvl-flip">0γ $${flip.toFixed(2)}</span>${d.regime ? ` <span class="${regimeCls}">${d.regime}</span>` : ''}` : '',
-          ok(ghost) ? `<span class="ghost-tag">♔ $${ghost}</span>` : '',
-          ok(cw) ? `<span class="up">CW $${cw}</span>` : '',
-          ok(pw) ? `<span class="down">PW $${pw}</span>` : '',
-          ok(em) ? `<span class="lvl-em">EM ±$${em.toFixed(2)}</span>` : '',
-        ].filter(Boolean).join(' · ');
-
-        box.innerHTML = `
-          <div class="summary-bar">
-            <div class="stat"><span>SPOT (${d.label || "0DTE"})</span><strong>$${spotNum.toFixed(2)}</strong></div>
-            <div class="stat"><span>NET GEX</span><strong>${fmtUsd(d.total_gex)}</strong></div>
-            <div class="stat"><span>NET VEX</span><strong>${fmtUsd(d.total_vex)}</strong></div>
-          </div>
-          <div class="levels-bar"><span class="delta-toggle">Δ <button class="${dG ? '' : 'on'}" onclick="setDeltaMode('vex')">VEX</button><button class="${dG ? 'on' : ''}" onclick="setDeltaMode('gex')">GEX</button></span>${lvl ? ' · ' + lvl : ''}</div>
-          <table>
-            <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>${dG ? 'G' : 'V'} 10m</th><th>${dG ? 'G' : 'V'} 1h</th></tr></thead>
-            <tbody>
-              ${d.rows.map((r, i) => `
-                <tr class="${i === spotIdx ? 'spot-row' : ''} ${i === flipIdx ? 'flip-edge' : ''} ${emIdx.has(i) ? 'em-edge' : ''}">
-                  <td>$${r.strike}${strikeTags(Number(r.strike))}</td>
-                  <td>${fmtPct(r.pct, false)}</td>
-                  <td style="${i === spotIdx ? '' : heatCellStyle(r.gex, minGex, maxGex)}" class="${r.gm === '👑' ? 'king-cell' : ''}">${r.gm ? r.gm + ' ' : ''}${fmtUsd(r.gex)}</td>
-                  <td style="${i === spotIdx ? '' : heatCellStyle(r.vex, minVex, maxVex)}" class="${r.vm === '👑' ? 'king-cell' : ''}">${r.vm ? r.vm + ' ' : ''}${fmtUsd(r.vex)}</td>
-                  <td>${fmtPct(dG ? r.g10 : r.v10, true)}</td>
-                  <td>${fmtPct(dG ? r.g1h : r.v1h, true)}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-          <div class="empty-msg" style="padding:6px 10px;font-size:10px;">👑 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · CW/PW = call/put wall.</div>`;
+        box.innerHTML = zeroView === "TRINITY" ? renderTrinity() : renderZeroDte(zeroView);
       } else if (activeTab === "7dte") {
         box.innerHTML = renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
       } else if (activeTab === "flow") {
