@@ -108,6 +108,16 @@
     .down { color: #fb7185; }
     tr.active-row td { background: #111827; }
     tr.magnet-row td { background: #1c1606; }
+    .chg { font-size: 9px; font-weight: 400; opacity: 0.85; margin-top: 1px; }
+    tr.flip-row td { background: #0b1220; color: #38bdf8; font-size: 10px; font-weight: 700; text-align: center; letter-spacing: 0.5px; padding: 3px 4px; border-top: 2px dashed #38bdf8; border-bottom: 2px dashed #38bdf8; }
+    tr.ghost-row td { background: #111827; color: #f8fafc; font-style: italic; }
+    .ghost-tag { color: #ffffff; font-weight: 700; text-shadow: 0 0 6px rgba(255,255,255,0.7); }
+    .regime-pos { color: #4ade80; }
+    tr.em-row td { background: #0b0f17; color: #a78bfa; font-size: 10px; font-weight: 700; text-align: center; padding: 2px 4px; border-top: 1px dotted #a78bfa; border-bottom: 1px dotted #a78bfa; }
+    .wall-tag { display: inline-block; font-size: 9px; font-weight: 700; padding: 0 3px; border-radius: 3px; margin-left: 2px; }
+    .wall-cw { background: #14532d; color: #86efac; }
+    .wall-pw { background: #7f1d1d; color: #fecaca; }
+    .regime-neg { color: #fb7185; }
     .matrix-scroll table:not(.matrix-table) th { position: static; }
     .signal-cell { text-align: left; font-size: 10px; white-space: normal; min-width: 120px; }
     .empty-msg { padding: 18px 12px; color: var(--muted); font-size: 11px; border-bottom: 1px solid #111827; }
@@ -131,7 +141,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.4</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.6</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -471,27 +481,92 @@
           if (v > maxVex) maxVex = v;
         });
 
+        // Ghost node: the all-expiry magnet (white crown), from the bot's magnet_map.
+        const ghost = Number(liveData.magnet_map?.tickers?.[activeTicker]?.magnet);
+        const hasGhost = Number.isFinite(ghost) && ghost > 0;
+        const flip = Number(d.flip);
+        const hasFlip = d.flip !== null && d.flip !== undefined && Number.isFinite(flip) && flip > 0;
+        const strikes = d.rows.map(r => Number(r.strike));
+        const lo = Math.min(...strikes), hi = Math.max(...strikes);
+        const spotNum = Number(d.spot);
+
+        // Rows run high to low. Add the flip divider and, when the magnet strike
+        // is not already a row, a ghost-only row in its place.
+        const items = d.rows.map((r, i) => ({ kind: "row", r, i, k: Number(r.strike) }));
+        if (hasGhost && !strikes.includes(ghost) && ghost > lo && ghost < hi) {
+          items.splice(items.findIndex(it => it.k < ghost), 0, { kind: "ghost", k: ghost });
+        }
+        // Expected-move band edges (spot ± ATM straddle) and the flip, as divider rows.
+        const em = Number(d.exp_move);
+        const hasEm = d.exp_move !== null && d.exp_move !== undefined && Number.isFinite(em) && em > 0;
+        const dividers = [];
+        if (hasFlip) dividers.push({ kind: "flip", k: flip });
+        if (hasEm) {
+          dividers.push({ kind: "em", k: spotNum + em, label: `EXP MOVE HIGH $${(spotNum + em).toFixed(2)} (+$${em.toFixed(2)})` });
+          dividers.push({ kind: "em", k: spotNum - em, label: `EXP MOVE LOW $${(spotNum - em).toFixed(2)} (−$${em.toFixed(2)})` });
+        }
+        dividers.filter(dv => dv.k > lo && dv.k < hi).sort((a, b) => b.k - a.k).forEach(dv => {
+          // place after any row/ghost at or above it, keeping dividers in strike order
+          items.splice(items.findIndex(it => it.k !== undefined && it.k < dv.k), 0, dv);
+        });
+        const cw = Number(d.call_wall), pw = Number(d.put_wall);
+        const wallTags = k =>
+          (Number.isFinite(cw) && cw > 0 && k === cw ? '<span class="wall-tag wall-cw">CW</span>' : '') +
+          (Number.isFinite(pw) && pw > 0 && k === pw ? '<span class="wall-tag wall-pw">PW</span>' : '');
+
+        const ghostCrown = `<span class="ghost-tag" title="All-expiry magnet">♔</span>`;
+        const gexChg = r => (r.g10 === undefined && r.g1h === undefined) ? "" :
+          `<div class="chg">${fmtPct(r.g10, true)} · ${fmtPct(r.g1h, true)}</div>`;
+        const regimeCls = (d.regime || "").startsWith("+") ? "regime-pos" : "regime-neg";
+        const ghostNote = !hasGhost ? "—" :
+          `♔ $${ghost}${ghost < lo ? " ↓" : ghost > hi ? " ↑" : ""}`;
+
+        const renderItem = it => {
+          if (it.kind === "em") {
+            return `<tr class="em-row"><td colspan="6">${it.label}</td></tr>`;
+          }
+          if (it.kind === "flip") {
+            return `<tr class="flip-row"><td colspan="6">0γ FLIP $${flip.toFixed(2)} · +γ above / −γ below</td></tr>`;
+          }
+          if (it.kind === "ghost") {
+            return `<tr class="ghost-row">
+              <td>${ghostCrown} $${ghost}${wallTags(ghost)}</td>
+              <td>${fmtPct(spotNum ? (ghost - spotNum) / spotNum : "", false)}</td>
+              <td colspan="4">all-expiry magnet (not a top 0DTE strike)</td>
+            </tr>`;
+          }
+          const { r, i } = it;
+          const isGhost = hasGhost && it.k === ghost;
+          return `
+            <tr class="${i === spotIdx ? 'spot-row' : ''}">
+              <td>${isGhost ? ghostCrown + ' ' : ''}$${r.strike}${wallTags(it.k)}</td>
+              <td>${fmtPct(r.pct, false)}</td>
+              <td style="${i === spotIdx ? '' : heatCellStyle(r.gex, minGex, maxGex)}" class="${r.gm === '👑' ? 'king-cell' : ''}">${r.gm ? r.gm + ' ' : ''}${fmtUsd(r.gex)}${gexChg(r)}</td>
+              <td style="${i === spotIdx ? '' : heatCellStyle(r.vex, minVex, maxVex)}" class="${r.vm === '👑' ? 'king-cell' : ''}">${r.vm ? r.vm + ' ' : ''}${fmtUsd(r.vex)}</td>
+              <td>${fmtPct(r.v10, true)}</td>
+              <td>${fmtPct(r.v1h, true)}</td>
+            </tr>`;
+        };
+
         box.innerHTML = `
           <div class="summary-bar">
-            <div class="stat"><span>SPOT (${d.label || "0DTE"})</span><strong>$${Number(d.spot).toFixed(2)}</strong></div>
+            <div class="stat"><span>SPOT (${d.label || "0DTE"})</span><strong>$${spotNum.toFixed(2)}</strong></div>
             <div class="stat"><span>NET GEX</span><strong>${fmtUsd(d.total_gex)}</strong></div>
             <div class="stat"><span>NET VEX</span><strong>${fmtUsd(d.total_vex)}</strong></div>
+            <div class="stat"><span>0γ FLIP</span><strong>${hasFlip ? '$' + flip.toFixed(2) : '—'}</strong></div>
+            <div class="stat"><span>REGIME</span><strong class="${regimeCls}">${d.regime || '—'}</strong></div>
+            <div class="stat"><span>GHOST (ALL-EXP)</span><strong class="ghost-tag">${ghostNote}</strong></div>
+            <div class="stat"><span>CALL WALL</span><strong class="up">${Number.isFinite(cw) && cw > 0 ? '$' + cw : '—'}</strong></div>
+            <div class="stat"><span>PUT WALL</span><strong class="down">${Number.isFinite(pw) && pw > 0 ? '$' + pw : '—'}</strong></div>
+            <div class="stat"><span>EXP MOVE${d.exp_move_expiry ? ' (' + String(d.exp_move_expiry).slice(5) + ')' : ''}</span><strong style="color:#a78bfa;">${hasEm ? '±$' + em.toFixed(2) : '—'}</strong></div>
           </div>
           <table>
-            <thead><tr><th>Strike</th><th>%±</th><th>Net GEX</th><th>Net VEX</th><th>10m</th><th>1h</th></tr></thead>
+            <thead><tr><th>Strike</th><th>%±</th><th>Net GEX<div class="chg">10m · 1h</div></th><th>Net VEX</th><th>VEX 10m</th><th>VEX 1h</th></tr></thead>
             <tbody>
-              ${d.rows.map((r, i) => `
-                <tr class="${i === spotIdx ? 'spot-row' : ''}">
-                  <td>$${r.strike}</td>
-                  <td>${fmtPct(r.pct, false)}</td>
-                  <td style="${i === spotIdx ? '' : heatCellStyle(r.gex, minGex, maxGex)}" class="${r.gm === '👑' ? 'king-cell' : ''}">${r.gm ? r.gm + ' ' : ''}${fmtUsd(r.gex)}</td>
-                  <td style="${i === spotIdx ? '' : heatCellStyle(r.vex, minVex, maxVex)}" class="${r.vm === '👑' ? 'king-cell' : ''}">${r.vm ? r.vm + ' ' : ''}${fmtUsd(r.vex)}</td>
-                  <td>${fmtPct(r.v10, true)}</td>
-                  <td>${fmtPct(r.v1h, true)}</td>
-                </tr>
-              `).join("")}
+              ${items.map(renderItem).join("")}
             </tbody>
-          </table>`;
+          </table>
+          <div class="empty-msg" style="padding:6px 10px;font-size:10px;">👑 0DTE king · ♔ ghost = all-expiry magnet · dashed line = zero gamma flip (cumulative net GEX crosses zero) · dotted purple = expected move (ATM straddle) · CW/PW = call/put wall.</div>`;
       } else if (activeTab === "7dte") {
         box.innerHTML = renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
       } else {
