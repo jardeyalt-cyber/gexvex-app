@@ -136,6 +136,7 @@
     .tri-col { min-width: 0; }
     .tri-head { background: var(--panel); border-bottom: 1px solid var(--border); padding: 5px 4px; font-size: 10px; line-height: 1.45; position: sticky; top: 42px; z-index: 5; }
     .tri-head b { color: #fff; font-size: 11px; }
+    .muted { color: var(--muted); }
     .tri-head .muted { color: var(--muted); font-size: 9px; }
     .tri-head .kdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #fde725; margin-right: 3px; vertical-align: 1px; }
     table.tri { font-size: 10px; }
@@ -146,6 +147,9 @@
     table.tri .dbadge { font-size: 8px; padding: 0 1px; letter-spacing: -0.3px; }
     tr.pad td { background: #000 !important; border-bottom-color: #000; }
     .wall-cw { background: #14532d; color: #86efac; }
+    .dp-tag { display: inline-block; font-size: 8px; font-weight: 700; padding: 0 2px; border-radius: 2px; line-height: 1.3; vertical-align: 1px; background: #1e293b; color: #94a3b8; }
+    .dp-tag.dp-node { background: #0e7490; color: #ecfeff; }
+    .st-still { color: #4ade80; } .st-trim { color: #fbbf24; } .st-exit { color: #f87171; } .st-muted { color: #64748b; }
     .wall-pw { background: #7f1d1d; color: #fecaca; }
     .regime-neg { color: #fb7185; }
     .matrix-scroll table:not(.matrix-table) th { position: static; }
@@ -190,7 +194,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.9.3</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.0</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -403,8 +407,26 @@
       const edgeIdx = lvl => ok(lvl) ? d.rows.findIndex(r => Number(r.strike) < lvl) : -1;
       const fi = edgeIdx(flip);
       const emIdx = new Set(ok(em) ? [edgeIdx(spotNum + em), edgeIdx(spotNum - em)].filter(i => i > 0) : []);
+      // Dark pool: top price levels (last sessions) and today's biggest prints, on their nearest strike row.
+      const dpT = liveData.darkpool?.tickers?.[sym] || {};
+      const dpAll = [...(dpT.levels || []).map(x => ({ ...x, kind: "level" })), ...(dpT.prints || []).map(x => ({ ...x, kind: "print" }))]
+        .filter(x => ok(Number(x.price)));
+      const strikes = d.rows.map(r => Number(r.strike));
+      const step = strikes.length > 1 ? Math.abs(strikes[0] - strikes[1]) : 1;
+      const topNodes = [...d.rows].sort((a, b) => Math.abs(Number(b.gex) || 0) - Math.abs(Number(a.gex) || 0)).slice(0, 6).map(r => Number(r.strike));
+      const dpRows = new Map();
+      dpAll.forEach(x => {
+        const px = Number(x.price);
+        let bi = -1, bd = Infinity;
+        strikes.forEach((k, i) => { const dd = Math.abs(k - px); if (dd < bd) { bd = dd; bi = i; } });
+        if (bi < 0 || bd > step) return;  // off the map
+        const nearNode = topNodes.some(k => Math.abs(k - px) / px <= 0.001);
+        const cur = dpRows.get(bi) || { notional: 0, node: false, items: [] };
+        cur.notional += Number(x.notional) || 0; cur.node = cur.node || nearNode; cur.items.push(x);
+        dpRows.set(bi, cur);
+      });
       return { d, spotIdx, minGex, maxGex, minVex, maxVex, spotNum, flip, em, cw, pw, ghost, ok,
-               flipIdx: fi > 0 ? fi : -1, emIdx };
+               flipIdx: fi > 0 ? fi : -1, emIdx, dpRows, dpLevels: dpT.levels || [], dpTopNodes: topNodes };
     }
 
     // Small % change badge drawn on a node (Heat-seeker style). Hidden under 1%.
@@ -425,9 +447,17 @@
       const k = Number(r.strike);
       const tags = (z.ok(z.ghost) && k === z.ghost ? ' <span class="ghost-tag" title="All-expiry magnet">♔</span>' : '') +
         (!small && z.ok(z.cw) && k === z.cw ? ' <span class="wall-tag wall-cw">CW</span>' : '') +
-        (!small && z.ok(z.pw) && k === z.pw ? ' <span class="wall-tag wall-pw">PW</span>' : '');
+        (!small && z.ok(z.pw) && k === z.pw ? ' <span class="wall-tag wall-pw">PW</span>' : '') +
+        dpTag(z.dpRows.get(i), small);
       const label = small ? `${r.strike}` : `$${r.strike}`;
       return `<td class="strike">${i === z.spotIdx ? `<span class="sp">${label}</span>` : label}${tags}</td>`;
+    }
+
+    function dpTag(m, small) {
+      if (!m) return '';
+      const title = m.items.map(x => `${x.kind === 'print' ? "Today's print" : 'Level'} $${Number(x.price).toFixed(2)} · ${fmtUsd(x.notional)}`).join('&#10;')
+        + (m.node ? '&#10;Within 0.1% of a top-6 GEX node' : '');
+      return ` <span class="dp-tag${m.node ? ' dp-node' : ''}" title="${title}">${small ? 'D' : 'DP'}${m.node ? '+' : ''}</span>`;
     }
 
     function rowClass(z, i) {
@@ -438,7 +468,7 @@
       return `<span class="seg"><button class="${deltaTf === '10m' ? 'on' : ''}" onclick="setDeltaTf('10m')">10m</button><button class="${deltaTf === '1h' ? 'on' : ''}" onclick="setDeltaTf('1h')">1h</button></span>`;
     }
 
-    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price).</div>`;
+    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · DP = big dark pool level or today's top print (hover for size), <span class="dp-tag dp-node">DP+</span> = also within 0.1% of a top-6 GEX node · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price).</div>`;
 
     function renderZeroDte(sym) {
       const z = zeroData(sym);
@@ -451,6 +481,10 @@
         z.ok(z.cw) ? `<span class="up">CW $${z.cw}</span>` : '',
         z.ok(z.pw) ? `<span class="down">PW $${z.pw}</span>` : '',
         z.ok(z.em) ? `<span class="lvl-em">EM ±$${z.em.toFixed(2)}</span>` : '',
+        z.dpLevels.length ? `<span style="color:#94a3b8;">DP ${z.dpLevels.slice(0, 3).map(x => {
+          const px = Number(x.price), near = z.dpTopNodes.some(k => Math.abs(k - px) / px <= 0.001);
+          return `<span title="${fmtUsd(x.notional)} over ${liveData.darkpool?.window || 5} sessions" style="${near ? 'color:#67e8f9;font-weight:700;' : ''}">$${px.toFixed(2)}</span>`;
+        }).join(' ')}</span>` : '',
       ].filter(Boolean).join(' · ');
       const g = deltaTf === "10m" ? "g10" : "g1h", v = deltaTf === "10m" ? "v10" : "v1h";
       return `
@@ -668,24 +702,27 @@
 
     // ---- FLOW tab: unusual options flow presets (bot: flow) ----
     const FLOW_PRESETS = [
-      ["big", "BIG OPENERS"], ["unusual", "HOW UNUSUAL"], ["accum", "ACCUMULATION"], ["ivx", "IV INFLATION"],
+      ["big", "BIG OPENERS"], ["cluster", "CLUSTERED"], ["unusual", "HOW UNUSUAL"], ["accum", "ACCUMULATION"],
+      ["ivx", "IV INFLATION"], ["whales", "WHALES"],
     ];
     const FLOW_DEFAULTS = {
-      big: { minPrem: 500000, maxDte: 100, minAsk: 80, sizeOi: true, otm: true, single: true },
-      accum: { minDays: 3, minAsk: 0 },
+      big: { minPrem: 500000, maxDte: 400, minAsk: 80, sizeOi: true, otm: true, single: true },
+      cluster: { minPrints: 5, minPrem: 500000, minAsk: 80, volOi: true, maxCv: 0.5 },
+      accum: { minDays: 3, minAsk: 80 },
+      whales: { show: "open" },
       ivx: { min: 1.3, max: 3, side: "all", sym: "ALL" },
     };
     let flowPreset = "big";
     let flowFilters = JSON.parse(JSON.stringify(FLOW_DEFAULTS));
     try {
-      const saved = JSON.parse(localStorage.getItem("gexvex_flow_filters") || "null");
+      const saved = JSON.parse(localStorage.getItem("gexvex_flow_filters_v2") || "null");
       if (saved) Object.keys(FLOW_DEFAULTS).forEach(k => Object.assign(flowFilters[k], saved[k] || {}));
       flowPreset = localStorage.getItem("gexvex_flow_preset") || "big";
     } catch (e) { /* storage blocked: defaults */ }
 
     function saveFlowPrefs() {
       try {
-        localStorage.setItem("gexvex_flow_filters", JSON.stringify(flowFilters));
+        localStorage.setItem("gexvex_flow_filters_v2", JSON.stringify(flowFilters));
         localStorage.setItem("gexvex_flow_preset", flowPreset);
       } catch (e) { /* ignore */ }
     }
@@ -745,7 +782,8 @@
       if (f.maxDte > 0 && (r.dte === null || r.dte === undefined || r.dte > f.maxDte)) return false;
       if (f.otm && !r.otm) return false;
       if (f.single && !r.single_leg) return false;
-      if (f.sizeOi && !(r.open_interest !== null && r.open_interest !== undefined && r.size > r.open_interest)) return false;
+      if (f.sizeOi && !(r.open_interest !== null && r.open_interest !== undefined
+        && (r.size > r.open_interest || (r.volume !== null && r.volume !== undefined && r.volume > r.open_interest)))) return false;
       if (f.minAsk > 0 && (r.ask_pct === null || r.ask_pct === undefined || r.ask_pct < f.minAsk)) return false;
       return true;
     }
@@ -758,7 +796,7 @@
           ${flowInput("big", "minPrem", "Min prem $", "50000", 90)}
           ${flowInput("big", "maxDte", "Max DTE", "1", 55)}
           ${flowInput("big", "minAsk", "Ask % ≥", "5", 50)}
-          ${flowToggle("big", "sizeOi", "Size > OI")}${flowToggle("big", "otm", "OTM only")}${flowToggle("big", "single", "Single leg")}
+          ${flowToggle("big", "sizeOi", "Size or vol > OI")}${flowToggle("big", "otm", "OTM only")}${flowToggle("big", "single", "Single leg")}
           <button class="flow-chip" onclick="resetFlowFilters('big')">Reset</button>
         </div>`;
       const head = `<div class="section-head">LARGE UNUSUAL OPENING ORDERS<span class="sub">${rows.length}/${all.length} · all tickers</span></div>`;
@@ -766,19 +804,19 @@
         return head + controls + `<div class="empty-msg">${all.length ? "No prints pass these filters yet today." : "No $500K+ opening prints yet today. The bot fills this every minute during market hours."}</div>`;
       }
       return head + controls + `<div class="matrix-scroll"><table>
-          <thead><tr><th>Time</th><th style="text-align:left;">Contract</th><th>DTE</th><th>Premium</th><th>Size / OI</th><th>Ask %</th><th>Side</th><th>OTM</th><th>IV×</th></tr></thead>
+          <thead><tr><th>Time</th><th style="text-align:left;">Contract</th><th>DTE</th><th>Premium</th><th>Size · Vol / OI</th><th>Ask %</th><th>Side</th><th>OTM</th><th>IV×</th></tr></thead>
           <tbody>${rows.map(r => `<tr>
               <td>${fmtTimeEt(r.time)}</td>
               <td style="text-align:left;">${fmtContract(r)}</td>
               <td>${r.dte ?? '—'}</td>
               <td><strong>${fmtUsd(r.premium)}</strong></td>
-              <td>${fmtNum(r.size)} / ${fmtNum(r.open_interest)}</td>
+              <td>${fmtNum(r.size)} · ${fmtNum(r.volume)} / ${fmtNum(r.open_interest)}</td>
               <td>${fmtAsk(r.ask_pct)}</td>
               <td class="${r.side === 'bought' ? 'up' : r.side === 'sold' ? 'down' : ''}">${r.side === 'bought' ? 'ASK' : r.side === 'sold' ? 'BID' : 'MID'}${r.kind === 'sweep' ? ' ⚡' : ''}</td>
               <td>${r.otm_pct === null || r.otm_pct === undefined ? '—' : r.otm_pct.toFixed(1) + '%'}</td>
               <td>${fmtIvx(r.iv_x)}</td>
             </tr>`).join("")}</tbody></table></div>`
-        + flowNote("$500K+ prints larger than the open interest (opening). Ask % = share of the contract's contracts traded at the ask today, from its $25K+ prints. Side = this print. ⚡ = sweep. IV× only for the bot's tickers.");
+        + flowNote("$500K+ opening prints where the print, or the contract's volume today, is larger than the open interest. LEAPS count (max DTE 400). Ask % = share of the contract's contracts traded at the ask today, from its $25K+ prints. Side = this print. ⚡ = sweep. IV× only for the bot's tickers.");
     }
 
     function renderFlowUnusual(fl) {
@@ -813,7 +851,7 @@
         return head + controls + `<div class="empty-msg">${all.length ? "No contracts meet these filters." : "No OI streaks found. The bot scans past sessions once a day."}</div>`;
       }
       return head + controls + `<div class="matrix-scroll"><table>
-          <thead><tr><th style="text-align:left;">Contract</th><th>Days</th><th>OI</th><th>OI Δ</th><th style="text-align:left;">Daily growth</th><th>Premium</th><th>Ask %</th><th>DTE</th></tr></thead>
+          <thead><tr><th style="text-align:left;">Contract</th><th>Days</th><th>OI</th><th>OI Δ</th><th style="text-align:left;">Daily growth</th><th>Premium</th><th>Ask %</th><th title="OI added per contract traded over the streak. Near 1 = nearly every contract opened a position.">OI/Vol</th><th>DTE</th></tr></thead>
           <tbody>${rows.map(r => `<tr>
               <td style="text-align:left;">${fmtContract(r)}</td>
               <td><strong>${r.days}</strong></td>
@@ -822,9 +860,10 @@
               <td style="text-align:left;">${(r.daily_growth_pct || []).map(g => g === null ? 'new' : '+' + Math.round(g) + '%').join(' · ')}</td>
               <td>${fmtUsd(r.premium)}</td>
               <td>${fmtAsk(r.ask_pct)}</td>
+              <td>${r.oi_per_vol === null || r.oi_per_vol === undefined ? '—' : Number(r.oi_per_vol).toFixed(2)}</td>
               <td>${r.dte ?? '—'}</td>
             </tr>`).join("")}</tbody></table></div>`
-        + flowNote("Open interest grew 30%+ on each of the last N sessions (OI of 300+). Sources: the market's top 1,000 OI gainers per day plus the top 300 for each bot ticker. Ask % = share of the contract's $25K+ prints at the ask since the streak began (top 30 only). Premium and volume sum the streak days.");
+        + flowNote("OI/Vol = open interest added per contract traded; near 1 means the volume was opening, not churn. Open interest grew 30%+ on each of the last N sessions (OI of 300+). Sources: the market's top 1,000 OI gainers per day plus the top 300 for each bot ticker. Ask % = share of the contract's $25K+ prints at the ask since the streak began. Premium and volume sum the streak days.");
     }
 
     function renderFlowIvx(fl) {
@@ -862,6 +901,81 @@
         + flowNote("1.0 = normal, 1.5 = 50% richer than usual. Baseline = the ticker's volume-weighted median IV over the last 5 sessions, separately for calls and puts, by expiry (0-7 / 8-30 / 31-100 / 100+ DTE) and moneyness (ATM / 2-8% / 8%+ OTM). $100K+ prints, bot tickers. Overall bases: " + (baseLine || "none yet"));
     }
 
+    function passesCluster(r, f) {
+      if (r.prints < f.minPrints || Number(r.premium) < f.minPrem) return false;
+      if (f.minAsk > 0 && (r.ask_pct === null || r.ask_pct === undefined || r.ask_pct < f.minAsk)) return false;
+      if (f.volOi && !(r.volume !== null && r.volume !== undefined && r.open_interest !== null && r.open_interest !== undefined && r.volume > r.open_interest)) return false;
+      if (f.maxCv > 0 && (r.size_cv === null || r.size_cv === undefined || r.size_cv > f.maxCv)) return false;
+      return true;
+    }
+
+    function renderFlowCluster(fl) {
+      const f = flowFilters.cluster;
+      const all = Array.isArray(fl.clustered) ? fl.clustered : [];
+      const rows = all.filter(r => passesCluster(r, f));
+      const controls = `<div class="flow-controls">
+          ${flowInput("cluster", "minPrints", "Prints ≥", "1", 45)}
+          ${flowInput("cluster", "minPrem", "Total $ ≥", "50000", 90)}
+          ${flowInput("cluster", "minAsk", "Ask % ≥", "5", 50)}
+          ${flowInput("cluster", "maxCv", "Size spread ≤", "0.1", 50)}
+          ${flowToggle("cluster", "volOi", "Vol > OI")}
+          <button class="flow-chip" onclick="resetFlowFilters('cluster')">Reset</button>
+        </div>`;
+      const head = `<div class="section-head">CLUSTERED BUYING (MANY EVEN ORDERS)<span class="sub">${rows.length}/${all.length} · all tickers</span></div>`;
+      if (rows.length === 0) {
+        return head + controls + `<div class="empty-msg">${all.length ? "No contracts pass these filters yet today." : "No clusters yet today. The bot groups every $50K+ print by contract each minute during market hours."}</div>`;
+      }
+      return head + controls + `<div class="matrix-scroll"><table>
+          <thead><tr><th style="text-align:left;">Contract</th><th>Prints</th><th>Total $</th><th>Avg size</th><th>Spread</th><th>Ask %</th><th>Vol / OI</th><th>OTM</th><th>DTE</th><th>First–last</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+              <td style="text-align:left;">${fmtContract(r)}</td>
+              <td><strong>${r.prints}</strong>${r.sweeps ? ` <span class="muted">⚡${r.sweeps}</span>` : ''}</td>
+              <td><strong>${fmtUsd(r.premium)}</strong></td>
+              <td>${fmtNum(r.avg_size)} @ ${r.avg_fill ?? '—'}</td>
+              <td>${r.size_cv === null || r.size_cv === undefined ? '—' : Number(r.size_cv).toFixed(2)}</td>
+              <td>${fmtAsk(r.ask_pct)}</td>
+              <td>${fmtNum(r.volume)} / ${fmtNum(r.open_interest)}</td>
+              <td>${r.otm_pct === null || r.otm_pct === undefined ? '—' : Number(r.otm_pct).toFixed(1) + '%'}</td>
+              <td>${r.dte ?? '—'}</td>
+              <td>${fmtTimeEt(r.first_time)}–${fmtTimeEt(r.last_time)}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        + flowNote("Contracts hit today by many single-leg orders of $50K+ instead of one block (structured buying). Spread = how uneven the order sizes are (std ÷ mean; 0 = all the same size). Ask % = share of those orders' contracts bought at the ask. ⚡ = sweeps. Contracts that pass the defaults go to the Whales tab.");
+    }
+
+    function renderFlowWhales(fl) {
+      const f = flowFilters.whales;
+      const wh = fl.whales || {};
+      const all = Array.isArray(wh.rows) ? wh.rows : [];
+      const OPEN = ["new", "still in", "trimming"];
+      const rows = f.show === "open" ? all.filter(w => OPEN.includes(w.status)) : all;
+      const s = wh.summary || {};
+      const chip = (val, label) => `<button class="flow-chip ${f.show === val ? 'on' : ''}" onclick="setFlowFilter('whales','show','${val}')">${label}</button>`;
+      const controls = `<div class="flow-controls">${chip("open", "Open")}${chip("all", "All")}</div>`;
+      const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '—';
+      const sumLine = s.tracked ? `<div class="levels-bar">${s.tracked} tracked · ${s.marked || 0} priced · green now ${pct(s.green_now, s.marked)} · reached +50% ${pct(s.hit_50, s.marked)} · +100% ${pct(s.hit_100, s.marked)}
+          · ${Object.entries(s.by_status || {}).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(' · ')}</div>` : '';
+      const head = `<div class="section-head">WHALE TRACKER<span class="sub">${rows.length}/${all.length}</span></div>`;
+      if (rows.length === 0) {
+        return head + sumLine + controls + `<div class="empty-msg">${all.length ? "No open positions. Switch to All for closed ones." : "Nothing flagged yet. Contracts that pass Big openers, Clustered, or Accumulation (3+ days, 80%+ at the ask) are added here and re-priced hourly."}</div>`;
+      }
+      const stCls = st => st === "still in" ? "st-still" : st === "trimming" ? "st-trim" : st === "exited" ? "st-exit" : "st-muted";
+      const pnl = v => v === null || v === undefined ? '—' : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${Math.round(v)}%</span>`;
+      return head + sumLine + controls + `<div class="matrix-scroll"><table>
+          <thead><tr><th style="text-align:left;">Contract</th><th>Flagged</th><th>Source</th><th>Entry</th><th>Now</th><th>P&L</th><th>Best</th><th>OI base → peak → now</th><th>Status</th></tr></thead>
+          <tbody>${rows.map(w => `<tr>
+              <td style="text-align:left;">${fmtContract(w)}</td>
+              <td>${(w.flagged || '').slice(5).replace('-', '/')}</td>
+              <td class="muted">${w.source || ''}</td>
+              <td>${w.entry_price ?? '—'}</td>
+              <td>${w.mid ?? '—'}</td>
+              <td><strong>${pnl(w.pnl_pct)}</strong></td>
+              <td>${pnl(w.max_pnl_pct)}</td>
+              <td>${fmtNum(w.base_oi)} → ${fmtNum(w.peak_oi)} → ${fmtNum(w.oi)}</td>
+              <td class="${stCls(w.status)}">${w.status}</td>
+            </tr>`).join("")}</tbody></table></div>`
+        + flowNote("P&L = contract mid vs the whale's average fill. Status from open interest: still in (80%+ of the OI they added remains), trimming (40–80%), exited (under 40%), no OI add (OI never rose: likely a closing or day trade). OI updates overnight, so new rows wait a session. Discord alerts on trimming and exited. Full log in the Whale Log sheet tab.");
+    }
+
     function renderFlow() {
       const fl = liveData.flow || {};
       const tabs = `<div class="flow-presets">${FLOW_PRESETS.map(([k, label]) =>
@@ -870,6 +984,8 @@
         return tabs + `<div class="empty-msg">No flow data in gexvex_live.json yet. It appears once the updated bot runs during market hours.</div>`;
       }
       const body = flowPreset === "unusual" ? renderFlowUnusual(fl)
+        : flowPreset === "cluster" ? renderFlowCluster(fl)
+        : flowPreset === "whales" ? renderFlowWhales(fl)
         : flowPreset === "accum" ? renderFlowAccum(fl)
         : flowPreset === "ivx" ? renderFlowIvx(fl) : renderFlowBig(fl);
       return tabs + body;
