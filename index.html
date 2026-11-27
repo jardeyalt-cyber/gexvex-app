@@ -114,6 +114,11 @@
     .wall-tag { display: inline-block; font-size: 8px; font-weight: 700; padding: 0 2px; border-radius: 2px; line-height: 1.3; vertical-align: 1px; }
     tr.flip-edge td { border-top: 2px solid rgba(56, 189, 248, 0.75); }
     tr.em-edge td { border-top: 2px dashed rgba(167, 139, 250, 0.7); }
+    tr.sig1-edge td { border-top: 2px dotted rgba(148, 163, 184, 0.6); }
+    tr.sig2-edge td { border-top: 2px dotted rgba(251, 191, 36, 0.85); }
+    .lvl-sig { color: #94a3b8; }
+    .heat-tag.extreme { color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.5); }
+    .roll { font-size: 9px; font-weight: 700; }
     .levels-bar { padding: 4px 10px 6px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); white-space: nowrap; overflow-x: auto; }
     .lvl-flip { color: #38bdf8; }
     .lvl-em { color: #a78bfa; }
@@ -200,7 +205,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.0</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.1</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -413,6 +418,11 @@
       const edgeIdx = lvl => ok(lvl) ? d.rows.findIndex(r => Number(r.strike) < lvl) : -1;
       const fi = edgeIdx(flip);
       const emIdx = new Set(ok(em) ? [edgeIdx(spotNum + em), edgeIdx(spotNum - em)].filter(i => i > 0) : []);
+      // Session sigma bands (anchored at the open) and recent ceiling/floor rolls, from the bot.
+      const sig = d.sigma && ok(Number(d.sigma.s1)) ? d.sigma : null;
+      const sig1Idx = new Set(sig ? [edgeIdx(Number(sig.hi1)), edgeIdx(Number(sig.lo1))].filter(i => i > 0) : []);
+      const sig2Idx = new Set(sig ? [edgeIdx(Number(sig.hi2)), edgeIdx(Number(sig.lo2))].filter(i => i > 0) : []);
+      const roll = d.wall_roll || {};
       // Dark pool: top price levels (last sessions) and today's biggest prints, on their nearest strike row.
       const dpT = liveData.darkpool?.tickers?.[sym] || {};
       const dpAll = [...(dpT.levels || []).map(x => ({ ...x, kind: "level" })), ...(dpT.prints || []).map(x => ({ ...x, kind: "print" }))]
@@ -432,7 +442,7 @@
         dpRows.set(bi, cur);
       });
       return { d, spotIdx, minGex, maxGex, minVex, maxVex, spotNum, flip, em, cw, pw, ghost, ok,
-               flipIdx: fi > 0 ? fi : -1, emIdx, dpRows, dpLevels: dpT.levels || [], dpTopNodes: topNodes };
+               flipIdx: fi > 0 ? fi : -1, emIdx, sig, sig1Idx, sig2Idx, roll, dpRows, dpLevels: dpT.levels || [], dpTopNodes: topNodes };
     }
 
     // Small % change badge drawn on a node (Heat-seeker style). Hidden under 1%.
@@ -452,8 +462,8 @@
     function strikeCell(z, r, i, small) {
       const k = Number(r.strike);
       const tags = (z.ok(z.ghost) && k === z.ghost ? ' <span class="ghost-tag" title="All-expiry magnet">♔</span>' : '') +
-        (!small && z.ok(z.cw) && k === z.cw ? ' <span class="wall-tag wall-cw">CW</span>' : '') +
-        (!small && z.ok(z.pw) && k === z.pw ? ' <span class="wall-tag wall-pw">PW</span>' : '') +
+        (!small && z.ok(z.cw) && k === z.cw ? ` <span class="wall-tag wall-cw">CW</span>${rollArrow(z.roll.ceil, 'Ceiling')}` : '') +
+        (!small && z.ok(z.pw) && k === z.pw ? ` <span class="wall-tag wall-pw">PW</span>${rollArrow(z.roll.floor, 'Floor')}` : '') +
         (small && i === z.spotIdx ? '' : dpTag(z.dpRows.get(i), small));  // no room beside the spot arrow
       const label = small ? `${r.strike}` : `$${r.strike}`;
       return `<td class="strike">${i === z.spotIdx ? `<span class="sp">${label}</span>` : label}${tags}</td>`;
@@ -467,14 +477,35 @@
     }
 
     function rowClass(z, i) {
-      return `${i === z.spotIdx ? 'spot-row' : ''} ${i === z.flipIdx ? 'flip-edge' : ''} ${z.emIdx.has(i) ? 'em-edge' : ''}`;
+      return `${i === z.spotIdx ? 'spot-row' : ''} ${i === z.flipIdx ? 'flip-edge' : ''} ${z.emIdx.has(i) ? 'em-edge' : ''} ${z.sig2Idx.has(i) ? 'sig2-edge' : z.sig1Idx.has(i) ? 'sig1-edge' : ''}`;
+    }
+
+    // Simply0DTE rules from the bot: wall roll arrow, sigma position, EXTREME tag. No alerts.
+    function rollArrow(r, name) {
+      if (!r) return '';
+      const up = r.direction === "up";
+      const why = `${name} rolled ${up ? 'up' : 'down'} ${r.from} → ${r.to} at ${r.time_et} ET${r.toward ? ', toward spot' : ''}${r.near ? ' (now within 0.3%)' : ''}`;
+      return `<span class="roll ${up ? 'up' : 'down'}" title="${why}">${up ? '⇡' : '⇣'}</span>`;
+    }
+    // short = just the EXTREME tag (shown first so it is never scrolled off); full = the σ size and position.
+    function sigmaTags(z, short) {
+      const s = z.sig;
+      if (!s) return '';
+      const zz = Number(s.z);
+      const out = [];
+      if (!short) out.push(`<span class="lvl-sig" title="Session bands anchored at $${s.anchor} (${s.at} ET): ±1σ $${s.lo1}–$${s.hi1}, ±2σ $${s.lo2}–$${s.hi2}">σ ±$${Number(s.s1).toFixed(2)}${Number.isFinite(zz) ? ` (${zz >= 0 ? '+' : ''}${zz.toFixed(1)}σ)` : ''}</span>`);
+      if (s.tag && short) {
+        const low = s.tag.side === "low";
+        out.push(`<span class="heat-tag extreme" title="Spot at ${zz.toFixed(1)}σ with a lit +gamma node at $${s.tag.node}: ${low ? 'puts are a no-go here' : 'calls are a no-go here'}">EXTREME ${low ? 'LOW' : 'HIGH'}</span>`);
+      }
+      return out.join(' ');
     }
 
     function tfSwitch() {
       return `<span class="seg"><button class="${deltaTf === '10m' ? 'on' : ''}" onclick="setDeltaTf('10m')">10m</button><button class="${deltaTf === '1h' ? 'on' : ''}" onclick="setDeltaTf('1h')">1h</button></span>`;
     }
 
-    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · DP = big dark pool level or today's top print (hover for size), <span class="dp-tag dp-node">DP+</span> = also within 0.1% of a top-6 GEX node · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price) · ▲/▼ = map bias (king side + which side is gaining GEX) · <span class="heat-tag chop">CHOP</span> = king node oversized, expect pinning · ⇧/⇩ = king reshuffled in the last 30 min · Trinity A/B = SPY and QQQ agree with SPX.</div>`;
+    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · DP = big dark pool level or today's top print (hover for size), <span class="dp-tag dp-node">DP+</span> = also within 0.1% of a top-6 GEX node · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · grey / <span style="color:#fbbf24;">amber dots</span> = ±1σ / ±2σ session bands from the open · <span class="heat-tag extreme">EXTREME</span> = past 2σ next to a lit +gamma node (don't fade into it) · ⇡/⇣ on CW/PW = ceiling or floor rolled in the last 30 min · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price) · ▲/▼ = map bias (king side + which side is gaining GEX) · <span class="heat-tag chop">CHOP</span> = king node oversized, expect pinning · ⇧/⇩ = king reshuffled in the last 30 min · Trinity A/B = SPY and QQQ agree with SPX.</div>`;
 
     // FlowbyBobby rules from the bot: bias arrow, chop guard, recent king reshuffle.
     function heatTags(h) {
@@ -505,11 +536,13 @@
       const { d } = z;
       const regimeCls = (d.regime || "").startsWith("+") ? "regime-pos" : "regime-neg";
       const lvl = [
+        sigmaTags(z, true),
         z.ok(z.flip) ? `<span class="lvl-flip">0γ $${z.flip.toFixed(2)}</span>${d.regime ? ` <span class="${regimeCls}">${d.regime}</span>` : ''}` : '',
         z.ok(z.ghost) ? `<span class="ghost-tag">♔ $${z.ghost}</span>` : '',
-        z.ok(z.cw) ? `<span class="up">CW $${z.cw}</span>` : '',
-        z.ok(z.pw) ? `<span class="down">PW $${z.pw}</span>` : '',
+        z.ok(z.cw) ? `<span class="up">CW $${z.cw}</span>${rollArrow(z.roll.ceil, 'Ceiling')}` : '',
+        z.ok(z.pw) ? `<span class="down">PW $${z.pw}</span>${rollArrow(z.roll.floor, 'Floor')}` : '',
         z.ok(z.em) ? `<span class="lvl-em">EM ±$${z.em.toFixed(2)}</span>` : '',
+        sigmaTags(z, false),
         z.dpLevels.length ? `<span style="color:#94a3b8;">DP ${z.dpLevels.slice(0, 3).map(x => {
           const px = Number(x.price), near = z.dpTopNodes.some(k => Math.abs(k - px) / px <= 0.001);
           return `<span title="${fmtUsd(x.notional)} over ${liveData.darkpool?.window || 5} sessions" style="${near ? 'color:#67e8f9;font-weight:700;' : ''}">$${px.toFixed(2)}</span>`;
@@ -557,7 +590,7 @@
         return `<div class="tri-col">
           <div class="tri-head"><b>${sym}</b>${d.label && d.label !== "0DTE" ? ` <span class="muted">${d.label}</span>` : ''}${d.source === "chain" ? ' <span class="muted" title="Built from open interest: the Tradytics exposure feed is on a stale price">OI</span>' : ''}<br>
             $${z.spotNum.toFixed(2)}<br>
-            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}${d.heat ? `<br>${heatTags(d.heat) || '&nbsp;'}` : ''}</div>
+            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}${d.heat || z.sig?.tag ? `<br>${[heatTags(d.heat), sigmaTags(z, true)].filter(Boolean).join(' ') || '&nbsp;'}` : ''}</div>
           <table class="hs tri"><tbody>${pad}
             ${d.rows.map((r, i) => `<tr class="${rowClass(z, i)}">${strikeCell(z, r, i, true)}${nodeCell(r[key], r[mk], r[dk], mn, mx, true)}</tr>`).join("")}
           </tbody></table>
