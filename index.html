@@ -117,6 +117,12 @@
     .levels-bar { padding: 4px 10px 6px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); white-space: nowrap; overflow-x: auto; }
     .lvl-flip { color: #38bdf8; }
     .lvl-em { color: #a78bfa; }
+    .heat-tag { font-size: 9px; font-weight: 700; padding: 0 3px; border-radius: 2px; background: rgba(255,255,255,0.06); white-space: nowrap; }
+    .heat-tag.chop { color: #fbbf24; }
+    .heat-tag.gradeA { color: #000; background: #4ade80; }
+    .heat-tag.gradeB { color: #4ade80; }
+    .heat-tag.bear.gradeA { background: #fb7185; }
+    .heat-tag.bear.gradeB { color: #fb7185; }
     /* Heat-seeker style node tables */
     .hs-controls { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #05070a; border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); }
     .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
@@ -190,7 +196,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.9.3</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v2.10</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -438,7 +444,30 @@
       return `<span class="seg"><button class="${deltaTf === '10m' ? 'on' : ''}" onclick="setDeltaTf('10m')">10m</button><button class="${deltaTf === '1h' ? 'on' : ''}" onclick="setDeltaTf('1h')">1h</button></span>`;
     }
 
-    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price).</div>`;
+    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price) · ▲/▼ = map bias (king side + which side is gaining GEX) · <span class="heat-tag chop">CHOP</span> = king node oversized, expect pinning · ⇧/⇩ = king reshuffled in the last 30 min · Trinity A/B = SPY and QQQ agree with SPX.</div>`;
+
+    // FlowbyBobby rules from the bot: bias arrow, chop guard, recent king reshuffle.
+    function heatTags(h) {
+      if (!h) return '';
+      const out = [];
+      if (h.bias === "bull") out.push('<span class="up" title="Map bias: bull">▲</span>');
+      else if (h.bias === "bear") out.push('<span class="down" title="Map bias: bear">▼</span>');
+      if (h.chop) {
+        const why = h.basis === "history" ? `king in the top ${Math.round(100 - h.pctile * 100)}% for this time of day` : `king holds ${Math.round(h.share * 100)}% of the ladder's GEX`;
+        out.push(`<span class="heat-tag chop" title="Chop guard: ${why}">CHOP</span>`);
+      }
+      if (h.reshuffle) {
+        const r = h.reshuffle, up = r.direction === "up";
+        out.push(`<span class="${up ? 'up' : 'down'}" title="King reshuffled ${r.from} → ${r.to} at ${r.time_et} ET">${up ? '⇧' : '⇩'}${r.from}→${r.to}</span>`);
+      }
+      return out.join(' ');
+    }
+    function trinityTag(t) {
+      if (!t || !t.maps) return '';
+      if (!t.grade) return `<span class="muted" style="font-size:9px;" title="SPX ${t.maps.SPX || '—'} · SPY ${t.maps.SPY || '—'} · QQQ ${t.maps.QQQ || '—'}">TRINITY —</span>`;
+      const bear = t.bias === "bear";
+      return `<span class="heat-tag grade${t.grade}${bear ? ' bear' : ''}" title="SPX ${t.maps.SPX} · SPY ${t.maps.SPY} · QQQ ${t.maps.QQQ}">TRINITY ${t.grade} ${bear ? '▼' : '▲'}</span>`;
+    }
 
     function renderZeroDte(sym) {
       const z = zeroData(sym);
@@ -451,6 +480,7 @@
         z.ok(z.cw) ? `<span class="up">CW $${z.cw}</span>` : '',
         z.ok(z.pw) ? `<span class="down">PW $${z.pw}</span>` : '',
         z.ok(z.em) ? `<span class="lvl-em">EM ±$${z.em.toFixed(2)}</span>` : '',
+        heatTags(d.heat),
       ].filter(Boolean).join(' · ');
       const g = deltaTf === "10m" ? "g10" : "g1h", v = deltaTf === "10m" ? "v10" : "v1h";
       return `
@@ -493,7 +523,7 @@
         return `<div class="tri-col">
           <div class="tri-head"><b>${sym}</b>${d.label && d.label !== "0DTE" ? ` <span class="muted">${d.label}</span>` : ''}${d.source === "chain" ? ' <span class="muted" title="Built from open interest: the Tradytics exposure feed is on a stale price">OI</span>' : ''}<br>
             $${z.spotNum.toFixed(2)}<br>
-            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}</div>
+            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}${d.heat ? `<br>${heatTags(d.heat) || '&nbsp;'}` : ''}</div>
           <table class="hs tri"><tbody>${pad}
             ${d.rows.map((r, i) => `<tr class="${rowClass(z, i)}">${strikeCell(z, r, i, true)}${nodeCell(r[key], r[mk], r[dk], mn, mx, true)}</tr>`).join("")}
           </tbody></table>
@@ -503,6 +533,7 @@
         <div class="hs-controls">
           <span class="seg"><button class="${isG ? 'on' : ''}" onclick="setTriGreek('gex')">GEX</button><button class="${isG ? '' : 'on'}" onclick="setTriGreek('vex')">VEX</button></span>
           ${tfSwitch()}
+          <span style="margin-left:auto;">${trinityTag(((liveData && liveData.zero_dte) || {}).trinity)}</span>
         </div>
         <div class="tri-grid">${cols.join("")}</div>
         ${ZERO_LEGEND}`;
