@@ -30,6 +30,12 @@
     }
     .title { font-size: 13px; font-weight: 700; letter-spacing: 0.5px; color: #fff; }
     .stamp { font-size: 11px; color: var(--yellow); text-align: right; }
+    .stamp.stale { color: #f87171; font-weight: 700; }
+    .stale-banner {
+      display: none; padding: 8px 12px; background: #450a0a; color: #fecaca;
+      border-bottom: 1px solid #7f1d1d; font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+    }
+    .stale-banner.show { display: block; }
     .pills {
       display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px;
       background: #05070a; border-bottom: 1px solid var(--border);
@@ -117,6 +123,7 @@
   </div>
 
   <div id="appContent">
+    <div class="stale-banner" id="staleBanner"></div>
     <div class="pills" id="tickerPills"></div>
     <div id="viewContainer"></div>
   </div>
@@ -135,6 +142,50 @@
     let liveData = null;
     let lastError = "";
     let countdown = 30;
+    // The bot writes server_ts (epoch seconds) into every Gist snapshot.
+    // Treat data older than this as stale and replace the LIVE label.
+    const STALE_AFTER_SEC = 120;
+
+    function fmtAge(sec) {
+      if (sec < 60) return `${sec}s`;
+      const m = Math.floor(sec / 60);
+      if (m < 60) return `${m}m`;
+      const h = Math.floor(m / 60);
+      if (h < 24) return `${h}h ${m % 60}m`;
+      const d = Math.floor(h / 24);
+      return `${d}d ${h % 24}h`;
+    }
+
+    function renderStatus() {
+      const stampEl = document.getElementById("statusStamp");
+      const bannerEl = document.getElementById("staleBanner");
+      const ts = Number(liveData?.server_ts);
+      let label, stale = false, banner = "";
+
+      if (ts > 0) {
+        const age = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+        if (age > STALE_AFTER_SEC) {
+          stale = true;
+          label = `STALE • ${fmtAge(age)} OLD`;
+          const when = new Date(ts * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+          banner = `⚠ DATA IS ${fmtAge(age).toUpperCase()} OLD (last update ${when}). `
+            + (lastError ? `Fetch error: ${lastError}.` : "Bot may be stopped or market closed.");
+        } else {
+          label = `${lastError ? "ERR" : "LIVE"} ${liveData?.zero_dte?.updated_at || ""}`.trim();
+        }
+      } else if (liveData) {
+        // Older snapshot without server_ts: age unknown, keep the bot's own stamp.
+        label = liveData.zero_dte?.updated_at || "AGE UNKNOWN";
+      } else {
+        label = lastError ? "ERR" : "CONNECTING...";
+      }
+      if (lastError && liveData && !(ts > 0)) label = `ERR • ${label}`;
+
+      stampEl.textContent = `${label} • ${countdown}s`;
+      stampEl.classList.toggle("stale", stale);
+      bannerEl.textContent = banner;
+      bannerEl.classList.toggle("show", stale);
+    }
 
     function getGistId() {
       const p = new URLSearchParams(window.location.search).get("gist");
@@ -439,13 +490,13 @@
         renderView();
       }
       countdown = 30;
+      renderStatus();
     }
 
     setInterval(() => {
       countdown--;
       if (countdown <= 0) fetchLive();
-      const stamp = liveData?.zero_dte?.updated_at || (lastError ? "ERR" : "LIVE");
-      document.getElementById("statusStamp").textContent = `${stamp} • ${countdown}s`;
+      renderStatus();
     }, 1000);
 
     renderPills();
