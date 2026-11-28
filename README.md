@@ -7,7 +7,7 @@ GexVex is two repos that work together:
 | Repo | What it does |
 | --- | --- |
 | **gexvex-bot** | A Python bot (`bot.py`) that runs on GitHub Actions during market hours. Every 30 seconds it pulls exposure data and option chains from the Tradytics API for SPY, QQQ, SMH, VIX, TSLA, AAPL and NVDA, then writes the results to a Google Sheet, a secret GitHub Gist, and (optionally) Discord. |
-| **gexvex-app** (this repo) | A single-page web app (`index.html`) you install on your phone. It reads the Gist every 30 seconds and shows four views: the 0DTE map, the Scanners tab (all-expiry magnets, node growth vs the magnet, and the 7DTE magnet scanner), the weekly OPEX GEX/VEX matrix for SPY, and the Flow tab (unusual options flow presets: big opening orders, per-ticker rankings, repeated OI accumulation, IV inflation). |
+| **gexvex-app** (this repo) | A single-page web app (`index.html`) you install on your phone. It reads the Gist every 30 seconds and shows five views: the 0DTE map, the Scanners tab (all-expiry magnets, node growth vs the magnet, and the 7DTE magnet scanner), the weekly OPEX GEX/VEX matrix for SPY, the Flow tab (unusual options flow presets: big opening orders, per-ticker rankings, repeated OI accumulation, IV inflation), and the Chart tab (candles with the GEX king and flip over time, plus call/put wall, magnet and expected move lines; built from the snapshots the phone sees while the app is open, kept for 3 days). |
 
 ```
 Tradytics API ──► gexvex-bot (GitHub Actions) ──┬──► Google Sheet
