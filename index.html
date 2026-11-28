@@ -128,6 +128,32 @@
     .heat-tag.gradeB { color: #4ade80; }
     .heat-tag.bear.gradeA { background: #fb7185; }
     .heat-tag.bear.gradeB { color: #fb7185; }
+    /* Heatmap-read study: node velocity, map patterns, setup cards (visual only, no alerts) */
+    .vel { display: inline-block; font-size: 8px; font-weight: 700; padding: 0 2px; border-radius: 2px; line-height: 1.3; vertical-align: 1px; }
+    .vel.pop { color: #000; background: #4ade80; }
+    .vel.pop.wall { background: #fbbf24; }
+    .vel.vanish { color: #fff; background: #ef4444; }
+    .pat-mark { font-size: 8px; font-weight: 700; color: #94a3b8; vertical-align: 1px; }
+    .pat-mark.rug { color: #fb7185; }
+    .pat-mark.rev { color: #4ade80; }
+    .pat-mark.gk { color: #67e8f9; }
+    .heat-tag.reg-RAINBOW { color: #000; background: linear-gradient(90deg,#f87171,#fbbf24,#4ade80,#60a5fa,#a78bfa); }
+    .heat-tag.reg-PIN { color: #fbbf24; }
+    .heat-tag.reg-TREND { color: #4ade80; }
+    .heat-tag.reg-RANGE { color: #67e8f9; }
+    .heat-tag.reg-WHIPSAW { color: #f0abfc; }
+    .heat-tag.rug { color: #fb7185; }
+    .heat-tag.rev { color: #4ade80; }
+    .setups { padding: 6px 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px; }
+    .setup { border: 1px solid var(--border); border-left: 3px solid #64748b; background: var(--panel); padding: 5px 7px; font-size: 10px; line-height: 1.45; }
+    .setup.up { border-left-color: #4ade80; }
+    .setup.down { border-left-color: #fb7185; }
+    .setup .sh { display: flex; gap: 6px; align-items: baseline; font-size: 11px; }
+    .setup .sh b { font-size: 12px; }
+    .setup .st { margin-left: auto; font-size: 9px; font-weight: 700; color: #94a3b8; }
+    .setup .st.HIT { color: #4ade80; } .setup .st.INVALID { color: #fb7185; } .setup .st.OPEN { color: #fbbf24; }
+    .setup .why { color: var(--muted); }
+    table.score td, table.score th { font-size: 10px; padding: 3px 6px; }
     /* Heat-seeker style node tables */
     .hs-controls { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #05070a; border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); }
     .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
@@ -211,7 +237,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.3</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.4</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -476,9 +502,38 @@
       return `<td class="node${king ? ' king-cell' : ''}" style="${heatCellStyle(val, mn, mx, king)}"><div class="nc">${deltaBadge(delta, short)}<span class="nv">${short ? fmtUsdShort(val) : fmtUsd(val)}${king ? (short ? '★' : ' ★') : ''}</span></div></td>`;
     }
 
+    // Heatmap-read study: POP / VANISH badge from the bot's node velocity tracker, plus rug, gatekeeper
+    // and stubborn marks on their strike. Visual only.
+    function velBadge(z, k, small) {
+      const v = z.d.patterns?.velocity?.[String(k)];
+      if (!v) return '';
+      const pop = v.type === "POP";
+      const where = v.where === "WALL" ? 'wall, not a magnet: a ceiling or floor getting stronger next to spot' : v.where === "MAGNET" ? 'magnet across an air pocket' : 'node';
+      const title = pop ? `Node popped to ${Math.round(v.share * 100)}% of the map in ${v.minutes} min (${where})` : `Node lost most of its value in ${v.minutes} min: the side it held is gone`;
+      const txt = pop ? (small ? '↑' : (v.where === "WALL" ? 'POP·W' : v.where === "MAGNET" ? 'POP·M' : 'POP')) : (small ? '↓' : 'GONE');
+      return ` <span class="vel ${pop ? 'pop' : 'vanish'}${v.where === 'WALL' ? ' wall' : ''}" title="${title}">${txt}</span>`;
+    }
+    function patMarks(z, k, small) {
+      const pt = z.d.patterns || {};
+      const out = [];
+      const rg = pt.rug;
+      if (rg && (k === Number(rg.upper) || k === Number(rg.lower))) {
+        const rev = rg.type === "REV_RUG";
+        out.push(`<span class="pat-mark ${rev ? 'rev' : 'rug'}" title="${rev ? 'Reverse rug' : 'Rug'}: ${rg.upper} over ${rg.lower}, destination ${rg.dest}">${small ? 'R' : (rev ? 'RR' : 'RUG')}</span>`);
+      }
+      if (pt.path && pt.path.gatekeeper !== null && k === Number(pt.path.gatekeeper)) {
+        out.push(`<span class="pat-mark gk" title="Gatekeeper between spot and the king at ${pt.path.king}">GK</span>`);
+      }
+      if ((pt.stubborn || []).some(n => Number(n.strike) === k)) {
+        const n = pt.stubborn.find(n => Number(n.strike) === k);
+        out.push(`<span class="pat-mark" title="Stubborn node: ${Math.round(n.share * 100)}% of the map for ${n.hours} h">S</span>`);
+      }
+      return out.length ? ' ' + out.join(' ') : '';
+    }
+
     function strikeCell(z, r, i, small) {
       const k = Number(r.strike);
-      const tags = (z.ok(z.ghost) && k === z.ghost ? ' <span class="ghost-tag" title="All-expiry magnet">♔</span>' : '') +
+      const tags = velBadge(z, k, small) + patMarks(z, k, small) + (z.ok(z.ghost) && k === z.ghost ? ' <span class="ghost-tag" title="All-expiry magnet">♔</span>' : '') +
         (!small && z.ok(z.cw) && k === z.cw ? ` <span class="wall-tag wall-cw">CW</span>${rollArrow(z.roll.ceil, 'Ceiling')}` : '') +
         (!small && z.ok(z.pw) && k === z.pw ? ` <span class="wall-tag wall-pw">PW</span>${rollArrow(z.roll.floor, 'Floor')}` : '') +
         (small && i === z.spotIdx ? '' : dpTag(z.dpRows.get(i), small));  // no room beside the spot arrow
@@ -522,7 +577,7 @@
       return `<span class="seg"><button class="${deltaTf === '10m' ? 'on' : ''}" onclick="setDeltaTf('10m')">10m</button><button class="${deltaTf === '1h' ? 'on' : ''}" onclick="setDeltaTf('1h')">1h</button></span>`;
     }
 
-    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · DP = big dark pool level or today's top print (hover for size), <span class="dp-tag dp-node">DP+</span> = also within 0.1% of a top-6 GEX node · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · grey / <span style="color:#fbbf24;">amber dots</span> = ±1σ / ±2σ session bands from the open · <span class="heat-tag extreme">EXTREME</span> = past 2σ next to a lit +gamma node (don't fade into it) · ⇡/⇣ on CW/PW = ceiling or floor rolled in the last 30 min · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price) · ▲/▼ = map bias (king side + which side is gaining GEX) · <span class="heat-tag chop">CHOP</span> = king node oversized, expect pinning · ⇧/⇩ = king reshuffled in the last 30 min · Trinity A/B = SPY and QQQ agree with SPX.</div>`;
+    const ZERO_LEGEND = `<div class="empty-msg" style="padding:6px 10px;font-size:10px;">★ 0DTE king · ♔ all-expiry magnet · DP = big dark pool level or today's top print (hover for size), <span class="dp-tag dp-node">DP+</span> = also within 0.1% of a top-6 GEX node · <span class="lvl-flip">blue line</span> = 0γ flip · <span class="lvl-em">purple dashes</span> = expected move · grey / <span style="color:#fbbf24;">amber dots</span> = ±1σ / ±2σ session bands from the open · <span class="heat-tag extreme">EXTREME</span> = past 2σ next to a lit +gamma node (don't fade into it) · ⇡/⇣ on CW/PW = ceiling or floor rolled in the last 30 min · badges = % size change over the chosen timeframe (1% or more) · OI = built from open interest at the live price (shown when the Tradytics feed is on a stale price) · ▲/▼ = map bias (king side + which side is gaining GEX) · <span class="heat-tag chop">CHOP</span> = king node oversized, expect pinning · ⇧/⇩ = king reshuffled in the last 30 min · Trinity A/B = SPY and QQQ agree with SPX · <span class="vel pop">POP</span> = node at least doubled and held (·W next to spot = a wall getting stronger, not a magnet; ·M = magnet across an air pocket) · <span class="vel vanish">GONE</span> = a big node lost most of its value · RUG / RR / GK / S on a strike = rug pair, gatekeeper, stubborn node · regime chips: TREND, RANGE, PIN, WHIPSAW, <span class="heat-tag reg-RAINBOW">RAINBOW</span> (stand aside) · PRESS = |GEX| below vs above spot · Trinity ROLL / KING ✓ / BAND / SLING = walls rolling on 2 of 3 maps, SPX reshuffle confirmed, next nodes in SPX points, stubborn node snap-back.</div>`;
 
     // FlowbyBobby rules from the bot: bias arrow, chop guard, recent king reshuffle.
     function heatTags(h) {
@@ -540,6 +595,36 @@
       }
       return out.join(' ');
     }
+    // Map shape chips from the bot: regime, rug, gatekeeper path to the king, pressure below vs above spot.
+    const REGIME_TIPS = {
+      RAINBOW: "Rainbow road: nodes alternate sign with no dominant king. Stand aside.",
+      PIN: "Positive gamma almost everywhere: pinned. Fade the edges precisely or skip 0DTE.",
+      WHIPSAW: "Mostly positive with negative nodes outside both edges: expect moves both ways.",
+      RANGE: "Big nodes on both sides of spot: range day, trade the edges, not the middle.",
+      TREND: "King and node growth on the same side: trend day, trade with the rolls.",
+      MIXED: "No clear shape.",
+    };
+    function patternTags(pt, short) {
+      if (!pt) return '';
+      const out = [];
+      const reg = pt.regime?.regime;
+      if (reg && reg !== "MIXED") out.push(`<span class="heat-tag reg-${reg}" title="${REGIME_TIPS[reg]}">${reg}${reg === 'TREND' && pt.regime.direction ? (pt.regime.direction === 'up' ? ' ▲' : ' ▼') : ''}</span>`);
+      if (pt.rug) {
+        const rev = pt.rug.type === "REV_RUG";
+        out.push(`<span class="heat-tag ${rev ? 'rev' : 'rug'}" title="${rev ? 'Reverse rug (bullish context, not a buy by itself)' : 'Rug: no longs while it holds'}: ${pt.rug.upper} over ${pt.rug.lower}, destination ${pt.rug.dest}">${rev ? 'REV RUG' : 'RUG'}${short ? '' : ' → ' + pt.rug.dest}</span>`);
+      }
+      if (!short && pt.path) {
+        const p = pt.path;
+        out.push(`<span title="Path from spot to the king (${p.king}). ${p.air_pocket ? 'Air pocket: little or negative gamma in between, so the move can be fast.' : 'Nodes in between will slow it down.'} ${Math.round(p.neg_share * 100)}% of the path is negative gamma.">${p.gatekeeper !== null ? `GK ${p.gatekeeper} → ` : ''}★${p.king}${p.air_pocket ? ' <span class="heat-tag rev">AIR POCKET</span>' : ''}</span>`);
+      }
+      if (!short && pt.pressure && pt.pressure.lean !== "even") {
+        const pr = pt.pressure, dn = pr.lean === "down", c = pr.change;
+        const ratio = dn ? (pr.ratio ?? 0) : (pr.below ? pr.above / pr.below : 0);
+        out.push(`<span class="${dn ? 'down' : 'up'}" title="|GEX| in the 8 strikes below spot vs the 8 above${c ? `; last ${c.minutes} min: below ${c.below_pct}%, above ${c.above_pct}%` : ''}">PRESS ${dn ? '▼' : '▲'}${ratio ? ratio.toFixed(1) + 'x' : ''}</span>`);
+      }
+      return out.join(' ');
+    }
+
     function trinityTag(t) {
       if (!t || !t.maps) return '';
       if (!t.grade) return `<span class="muted" style="font-size:9px;" title="SPX ${t.maps.SPX || '—'} · SPY ${t.maps.SPY || '—'} · QQQ ${t.maps.QQQ || '—'}">TRINITY —</span>`;
@@ -565,6 +650,7 @@
           return `<span title="${fmtUsd(x.notional)} over ${liveData.darkpool?.window || 5} sessions" style="${near ? 'color:#67e8f9;font-weight:700;' : ''}">$${px.toFixed(2)}</span>`;
         }).join(' ')}</span>` : '',
         heatTags(d.heat),
+        patternTags(d.patterns, false),
       ].filter(Boolean).join(' · ');
       const g = deltaTf === "10m" ? "g10" : "g1h", v = deltaTf === "10m" ? "v10" : "v1h";
       return `
@@ -607,7 +693,7 @@
         return `<div class="tri-col">
           <div class="tri-head"><b>${sym}</b>${d.label && d.label !== "0DTE" ? ` <span class="muted">${d.label}</span>` : ''}${d.source === "chain" ? ' <span class="muted" title="Built from open interest: the Tradytics exposure feed is on a stale price">OI</span>' : ''}<br>
             $${z.spotNum.toFixed(2)}<br>
-            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}${d.heat || z.sig?.tag ? `<br>${[heatTags(d.heat), sigmaTags(z, true)].filter(Boolean).join(' ') || '&nbsp;'}` : ''}</div>
+            <span class="kdot"></span>${king ? king.strike : '—'} ${kChg}${d.heat || z.sig?.tag || d.patterns ? `<br>${[heatTags(d.heat), sigmaTags(z, true), patternTags(d.patterns, true)].filter(Boolean).join(' ') || '&nbsp;'}` : ''}</div>
           <table class="hs tri"><tbody>${pad}
             ${d.rows.map((r, i) => `<tr class="${rowClass(z, i)}">${strikeCell(z, r, i, true)}${nodeCell(r[key], r[mk], r[dk], mn, mx, true)}</tr>`).join("")}
           </tbody></table>
@@ -617,10 +703,52 @@
         <div class="hs-controls">
           <span class="seg"><button class="${isG ? 'on' : ''}" onclick="setTriGreek('gex')">GEX</button><button class="${isG ? '' : 'on'}" onclick="setTriGreek('vex')">VEX</button></span>
           ${tfSwitch()}
-          <span style="margin-left:auto;">${trinityTag(((liveData && liveData.zero_dte) || {}).trinity)}</span>
+          <span style="margin-left:auto;">${trinityExtras(((liveData && liveData.zero_dte) || {}).trinity)} ${trinityTag(((liveData && liveData.zero_dte) || {}).trinity)}</span>
         </div>
         <div class="tri-grid">${cols.join("")}</div>
         ${ZERO_LEGEND}`;
+    }
+
+    // Trinity extras from the bot: roll in 2 of 3 maps, SPX reshuffle confirmed, SPX-point stack band, slingshot.
+    function trinityExtras(t) {
+      if (!t) return '';
+      const out = [];
+      if (t.roll) out.push(`<span class="${t.roll.direction === 'up' ? 'up' : 'down'}" title="Walls rolled ${t.roll.direction} on ${t.roll.maps.join(' + ')} in the last 30 min">ROLL ${t.roll.direction === 'up' ? '⇡' : '⇣'}${t.roll.maps.length}/3</span>`);
+      if (t.confirm) out.push(`<span class="${t.confirm.direction === 'up' ? 'up' : 'down'}" title="SPX king reshuffled ${t.confirm.direction} to ${t.confirm.spx_to}; ${t.confirm.by} followed ${t.confirm.minutes} min later (${t.confirm.time_et} ET)">KING ✓${t.confirm.by}</span>`);
+      if (t.band) out.push(`<span class="muted" title="Next node on each map in SPX points: ${Object.entries(t.band.levels).map(([s, v]) => `${s} ${v}`).join(', ')}. Scale in across the band; the far edge is the last stop.">BAND ${t.band.band[0]}–${t.band.band[1]}</span>`);
+      if (t.slingshot) out.push(`<span class="heat-tag" title="${t.slingshot.symbol} still holds a stubborn node at ${t.slingshot.strike} while the other maps lost theirs: price tends to snap back toward it">SLING ${t.slingshot.symbol} ${t.slingshot.strike}</span>`);
+      return out.join(' ');
+    }
+
+    // ---- Talon-style setup cards and their scorecard (bot grades every card; nothing here alerts) ----
+    const SETUP_NAMES = { KING_PATH: "Gatekeeper → king", RANGE_FADE: "Range edge fade", RUG_FADE: "Rug fade",
+                          REV_RUG: "Reverse rug", POP_RUN: "Pop run", TALON: "Weekly Talon card" };
+    function setupCard(c) {
+      const up = c.direction === "up";
+      const tl = (c.targets || []).map((t, i) => i === 0 ? `<b>${t}</b>` : t).join(' → ');
+      const when = c.resolved_ts ? new Date(c.resolved_ts * 1000) : new Date((c.opened_ts || c.created_ts) * 1000);
+      const hhmm = when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
+      const move = c.status === "OPEN" || c.resolved_ts ? ` · best ${c.mfe_pct >= 0 ? '+' : ''}${(c.mfe_pct || 0).toFixed(2)}% / worst ${(c.mae_pct || 0).toFixed(2)}%` : '';
+      const vex = (c.vex_refs || []).length ? `<br>VEX refs: ${c.vex_refs.map(v => `${v.strike} (${v.expiry.slice(5)})`).join(', ')}` : '';
+      return `<div class="setup ${up ? 'up' : 'down'}">
+        <div class="sh"><b>${c.symbol}</b> <span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'}</span> ${c.label || SETUP_NAMES[c.kind] || c.kind}${c.size === 'half' ? ' <span class="muted">(half size)</span>' : ''}<span class="st ${c.status}">${c.status} ${hhmm}</span></div>
+        <div>${c.status === 'WATCH' ? 'Best entry' : 'Entry'} <b>${c.entry}</b> · invalid <b>${c.stop}</b> · targets ${tl} · R:R 1:${c.rr} <span class="muted">(${c.risk_strikes}/${c.reward_strikes} strikes)</span>${move}${vex}</div>
+        ${c.why ? `<div class="why">${c.why}</div>` : ''}
+      </div>`;
+    }
+    function renderSetups() {
+      const su = liveData.zero_dte?.setups;
+      const head = `<div class="section-head">SETUPS<span class="sub">map reads graded automatically · ${liveData.zero_dte?.updated_at || ''}</span></div>`;
+      if (!su) return head + `<div class="empty-msg">No setup data yet. The bot opens cards from the SPX, SPY and QQQ maps during market hours and weekly cards from the OPEX maps.</div>`;
+      const live = su.cards || [], recent = su.recent || [];
+      const score = Object.entries(su.scorecard || {});
+      return head +
+        (live.length ? `<div class="setups">${live.map(setupCard).join('')}</div>` : `<div class="empty-msg">No live setups right now.</div>`) +
+        (recent.length ? `<div class="section-head">RECENT<span class="sub">last ${recent.length}</span></div><div class="setups">${recent.map(setupCard).join('')}</div>` : '') +
+        (score.length ? `<div class="section-head">SCORECARD<span class="sub">resolved cards kept by the bot (last 200)</span></div>
+          <div class="matrix-scroll"><table class="score"><thead><tr><th>Setup</th><th>Cards</th><th>Hit</th><th>Invalid</th><th>Target gone</th><th>Expired</th><th>Hit rate</th><th>Avg best</th><th>Avg worst</th></tr></thead><tbody>
+          ${score.map(([k, s]) => `<tr><td>${SETUP_NAMES[k] || k}</td><td>${s.n}</td><td class="up">${s.HIT}</td><td class="down">${s.INVALID}</td><td>${s.GONE}</td><td>${s.EXPIRED}</td><td><b>${s.hit_rate === null ? '—' : Math.round(s.hit_rate * 100) + '%'}</b></td><td>${(s.avg_mfe_pct ?? 0).toFixed(2)}%</td><td>${(s.avg_mae_pct ?? 0).toFixed(2)}%</td></tr>`).join('')}
+          </tbody></table></div>` : '');
     }
 
     // Buttons follow the bot's list once it sends one; until then, the watchlist.
@@ -1304,7 +1432,7 @@
       } else if (activeTab === "0dte") {
         box.innerHTML = zeroView === "TRINITY" ? renderTrinity() : renderZeroDte(zeroView);
       } else if (activeTab === "7dte") {
-        box.innerHTML = renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
+        box.innerHTML = renderSetups() + renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
       } else if (activeTab === "flow") {
         box.innerHTML = renderFlow();
       } else {
