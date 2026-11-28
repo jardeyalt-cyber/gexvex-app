@@ -165,14 +165,20 @@
     .regime-neg { color: #fb7185; }
     .matrix-scroll table:not(.matrix-table) th { position: static; }
     .signal-cell { text-align: left; font-size: 10px; white-space: normal; min-width: 120px; }
+    .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 6px 10px; font-size: 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+    .chart-legend b { font-weight: 700; }
+    .chart-tf { display: flex; gap: 6px; padding: 6px 10px; background: #05070a; border-bottom: 1px solid var(--border); align-items: center; }
+    .chart-tf .flow-chip { padding: 4px 9px; }
+    .chart-note { margin-left: auto; font-size: 9px; color: var(--muted); }
+    #chartBox { height: calc(100vh - 230px); min-height: 260px; }
     .empty-msg { padding: 18px 12px; color: var(--muted); font-size: 11px; border-bottom: 1px solid #111827; }
     nav {
       position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
       background: var(--panel); border-top: 1px solid var(--border);
-      display: grid; grid-template-columns: repeat(4, 1fr); z-index: 30;
+      display: grid; grid-template-columns: repeat(5, 1fr); z-index: 30;
     }
     nav button {
-      background: none; border: none; color: var(--muted); font-size: 11px;
+      background: none; border: none; color: var(--muted); font-size: 10px;
       font-weight: 700; cursor: pointer; border-right: 1px solid var(--border);
     }
     nav button.active { color: var(--yellow); background: #111827; }
@@ -205,7 +211,7 @@
 </head>
 <body>
   <header>
-    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.2</span></div>
+    <div class="title">GEX/VEX LIVE <span style="color:#94a3b8;font-size:10px;">v3.3</span></div>
     <div class="stamp" id="statusStamp">CONNECTING...</div>
   </header>
 
@@ -226,6 +232,7 @@
     <button id="tab-7dte" onclick="setTab('7dte')">SCANNERS</button>
     <button id="tab-weekly" onclick="setTab('weekly')">WEEKLY OPEX</button>
     <button id="tab-flow" onclick="setTab('flow')">FLOW</button>
+    <button id="tab-chart" onclick="setTab('chart')">CHART</button>
   </nav>
 
   <script>
@@ -360,8 +367,9 @@
       const hide = activeTab === "flow" && flowPreset !== "unusual";
       el.style.display = hide ? "none" : "flex";
       const list = activeTab === "0dte" ? ["TRINITY", ...ZERO_TICKERS]
-        : activeTab === "weekly" ? weeklyTickers() : TICKERS;
-      const cur = activeTab === "0dte" ? zeroView : activeTab === "weekly" ? weeklyTicker : activeTicker;
+        : activeTab === "weekly" ? weeklyTickers() : activeTab === "chart" ? CHART_TICKERS : TICKERS;
+      const cur = activeTab === "0dte" ? zeroView : activeTab === "weekly" ? weeklyTicker
+        : activeTab === "chart" ? chartTicker : activeTicker;
       el.innerHTML = list.map(t =>
         `<button class="pill ${t === cur ? 'active' : ''}" onclick="setTicker('${t}')">${t}</button>`
       ).join("");
@@ -369,7 +377,7 @@
 
     function setTab(tab) {
       activeTab = tab;
-      ["0dte", "7dte", "weekly", "flow"].forEach(t => {
+      ["0dte", "7dte", "weekly", "flow", "chart"].forEach(t => {
         document.getElementById(`tab-${t}`).classList.toggle("active", t === tab);
       });
       renderPills();
@@ -384,6 +392,9 @@
       } else if (activeTab === "weekly") {
         weeklyTicker = t;
         savePref("gexvex_weekly_ticker", t);
+      } else if (activeTab === "chart") {
+        chartTicker = t;
+        savePref("gexvex_chart_ticker", t);
       } else {
         activeTicker = t;
       }
@@ -1073,6 +1084,203 @@
       return tabs + body;
     }
 
+
+    // ---------- CHART tab ----------
+    // Candles + GEX levels for one ticker. Price and levels come from the snapshots this
+    // phone has seen today (one every 30s while the app is open), kept in localStorage per
+    // trading day. Lines: GEX king and flip over time (step lines), plus the current call
+    // wall, put wall, all-expiry magnet and expected move as horizontal lines.
+    const CHART_TICKERS = ["SPY", "SPX", "QQQ", "SMH", "TSLA", "AAPL", "NVDA"];
+    const CHART_LIB = "https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js";
+    const CHART_KEEP_DAYS = 3;
+    let chartTicker = pref("gexvex_chart_ticker", "SPY");
+    let chartTf = Number(pref("gexvex_chart_tf", "300"));
+    let chartLibPromise = null;
+    let chartObj = null;  // { key, chart, candles, king, flip, lines: [] }
+    const etDay = ts => new Date(ts * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const etTime = ts => new Date(ts * 1000).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
+
+    function chartKing(rows) {
+      let best = null;
+      (rows || []).forEach(r => {
+        const g = Number(r.gex);
+        if (Number.isFinite(g) && (!best || Math.abs(g) > Math.abs(best.g))) best = { k: Number(r.strike), g };
+      });
+      return best ? best.k : null;
+    }
+
+    function loadSamples(day) {
+      try { return JSON.parse(localStorage.getItem(`gexvex_chart_${day}`) || "{}"); } catch (e) { return {}; }
+    }
+
+    // Called after every successful fetch: one sample per ticker per new bot snapshot.
+    function recordChartSample() {
+      const ts = Number(liveData?.server_ts);
+      const tick = liveData?.zero_dte?.tickers;
+      if (!(ts > 0) || !tick) return;
+      const day = etDay(ts);
+      const store = loadSamples(day);
+      let added = false;
+      Object.entries(tick).forEach(([sym, d]) => {
+        const p = Number(d?.spot);
+        if (!(p > 0)) return;
+        const arr = store[sym] || (store[sym] = []);
+        if (arr.length && arr[arr.length - 1].t >= ts) return;
+        const n = v => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null; };
+        arr.push({ t: ts, p, k: chartKing(d.rows), f: n(d.flip) });
+        if (arr.length > 1600) arr.splice(0, arr.length - 1600);
+        added = true;
+      });
+      if (!added) return;
+      try {
+        localStorage.setItem(`gexvex_chart_${day}`, JSON.stringify(store));
+        Object.keys(localStorage).filter(k => k.startsWith("gexvex_chart_2")).sort().reverse()
+          .slice(CHART_KEEP_DAYS).forEach(k => localStorage.removeItem(k));
+      } catch (e) { console.warn("Chart samples not saved:", e); }
+    }
+
+    function chartSeries(sym) {
+      const ts = Number(liveData?.server_ts) || Date.now() / 1000;
+      const samples = (loadSamples(etDay(ts))[sym] || []).slice().sort((a, b) => a.t - b.t);
+      const bars = [], king = [], flip = [];
+      samples.forEach(s => {
+        const b = s.t - (s.t % chartTf);
+        const last = bars[bars.length - 1];
+        if (last && last.time === b) {
+          last.high = Math.max(last.high, s.p); last.low = Math.min(last.low, s.p); last.close = s.p;
+        } else {
+          bars.push({ time: b, open: s.p, high: s.p, low: s.p, close: s.p });
+        }
+        const put = (arr, v) => {
+          if (v === null || v === undefined) return;
+          if (arr.length && arr[arr.length - 1].time === b) arr[arr.length - 1].value = v; else arr.push({ time: b, value: v });
+        };
+        put(king, s.k); put(flip, s.f);
+      });
+      return { bars, king, flip, n: samples.length };
+    }
+
+    function chartLevels(sym) {
+      const d = liveData?.zero_dte?.tickers?.[sym] || {};
+      const n = v => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null; };
+      const spot = n(d.spot), em = n(d.exp_move);
+      return {
+        spot, king: chartKing(d.rows), flip: n(d.flip), cw: n(d.call_wall), pw: n(d.put_wall),
+        magnet: n(liveData?.magnet_map?.tickers?.[sym]?.magnet), em,
+        emHi: spot && em ? spot + em : null, emLo: spot && em ? spot - em : null, regime: d.regime || "",
+      };
+    }
+
+    const CHART_COLORS = { king: "#facc15", flip: "#e5e7eb", cw: "#4ade80", pw: "#f87171", magnet: "#c084fc", em: "#64748b" };
+
+    function setChartTf(tf) {
+      chartTf = tf; savePref("gexvex_chart_tf", String(tf));
+      chartObj = null; renderView();
+    }
+
+    function renderChartShell(sym) {
+      const L = chartLevels(sym);
+      const f = v => v === null || v === undefined ? "—" : Number(v).toFixed(2);
+      const item = (c, label, v) => `<span><b style="color:${c}">${label}</b> ${v}</span>`;
+      return `
+        <div class="chart-tf">
+          ${[[60, "1m"], [300, "5m"], [900, "15m"]].map(([tf, l]) =>
+            `<button class="flow-chip ${chartTf === tf ? "on" : ""}" onclick="setChartTf(${tf})">${l}</button>`).join("")}
+          <span class="chart-note" id="chartNote"></span>
+        </div>
+        <div class="chart-legend" id="chartLegend">
+          ${item("#fff", sym, f(L.spot))}
+          ${item(CHART_COLORS.king, "KING", f(L.king))}
+          ${item(CHART_COLORS.flip, "FLIP", f(L.flip))}
+          ${item(CHART_COLORS.cw, "CW", f(L.cw))}
+          ${item(CHART_COLORS.pw, "PW", f(L.pw))}
+          ${item(CHART_COLORS.magnet, "MAGNET", f(L.magnet))}
+          ${item(CHART_COLORS.em, "EM ±", f(L.em))}
+          ${L.regime ? `<span class="${L.regime.includes("−") ? "regime-neg" : ""}">${L.regime}</span>` : ""}
+        </div>
+        <div id="chartBox"></div>`;
+    }
+
+    function loadChartLib() {
+      if (window.LightweightCharts) return Promise.resolve();
+      if (!chartLibPromise) {
+        chartLibPromise = new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = CHART_LIB; s.onload = resolve;
+          s.onerror = () => { chartLibPromise = null; reject(new Error("chart library failed to load")); };
+          document.head.appendChild(s);
+        });
+      }
+      return chartLibPromise;
+    }
+
+    async function drawChart() {
+      const sym = chartTicker;
+      const box = document.getElementById("chartBox");
+      if (!box) return;
+      try { await loadChartLib(); } catch (e) { box.innerHTML = `<div class="empty-msg">${e.message}. Check your connection.</div>`; return; }
+      if (activeTab !== "chart" || sym !== chartTicker || !document.getElementById("chartBox")) return;
+      const LC = window.LightweightCharts;
+      const key = `${sym}|${chartTf}`;
+      if (!chartObj || chartObj.key !== key || !box.contains(chartObj.el)) {
+        if (chartObj) { try { chartObj.chart.remove(); } catch (e) {} }
+        box.innerHTML = "";
+        const chart = LC.createChart(box, {
+          autoSize: true,
+          layout: { background: { color: "#000000" }, textColor: "#94a3b8", fontFamily: "Roboto Mono, monospace", fontSize: 10 },
+          grid: { vertLines: { color: "#0f172a" }, horzLines: { color: "#0f172a" } },
+          rightPriceScale: { borderColor: "#1d283b" },
+          timeScale: { borderColor: "#1d283b", timeVisible: true, secondsVisible: false, rightOffset: 4,
+                       tickMarkFormatter: t => etTime(t) },
+          localization: { timeFormatter: t => etTime(t) },
+          crosshair: { mode: LC.CrosshairMode.Normal },
+        });
+        const candles = chart.addCandlestickSeries({
+          upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+          // Stretch the price axis so the walls and magnet stay on screen.
+          autoscaleInfoProvider: base => {
+            const r = base(), extra = chartObj?.keepVisible || [];
+            if (!r || !r.priceRange || !extra.length) return r;
+            r.priceRange.minValue = Math.min(r.priceRange.minValue, ...extra);
+            r.priceRange.maxValue = Math.max(r.priceRange.maxValue, ...extra);
+            return r;
+          },
+        });
+        const step = LC.LineType.WithSteps;
+        const king = chart.addLineSeries({ color: CHART_COLORS.king, lineWidth: 2, lineType: step, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        const flip = chart.addLineSeries({ color: CHART_COLORS.flip, lineWidth: 1, lineStyle: LC.LineStyle.Dashed, lineType: step, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+        chartObj = { key, chart, candles, king, flip, lines: [], el: box.firstChild, fitted: false };
+      }
+      const S = chartSeries(sym);
+      const L = chartLevels(sym);
+      chartObj.keepVisible = [L.cw, L.pw, L.magnet].filter(v => v);
+      chartObj.candles.setData(S.bars);
+      chartObj.king.setData(S.king);
+      chartObj.flip.setData(S.flip);
+      chartObj.lines.forEach(l => chartObj.candles.removePriceLine(l));
+      const solid = LC.LineStyle.Solid, dotted = LC.LineStyle.Dotted;
+      chartObj.lines = [
+        [L.cw, CHART_COLORS.cw, "CW", solid], [L.pw, CHART_COLORS.pw, "PW", solid],
+        [L.magnet, CHART_COLORS.magnet, "MAG", LC.LineStyle.LargeDashed],
+        [L.emHi, CHART_COLORS.em, "EM+", dotted], [L.emLo, CHART_COLORS.em, "EM−", dotted],
+        [L.king, CHART_COLORS.king, "KING", dotted],
+      ].filter(([p]) => p).map(([price, color, title, lineStyle]) =>
+        chartObj.candles.createPriceLine({ price, color, title, lineStyle, lineWidth: 1, axisLabelVisible: true }));
+      if (!chartObj.fitted && S.bars.length) { chartObj.chart.timeScale().fitContent(); chartObj.fitted = true; }
+      const note = document.getElementById("chartNote");
+      if (note) note.textContent = S.n ? `${S.n} samples today · ${etTime(S.bars[0].time)}–${etTime(S.bars[S.bars.length - 1].time)} ET`
+        : "no samples yet today";
+      if (!S.bars.length && !box.querySelector(".chart-empty")) {
+        const msg = document.createElement("div");
+        msg.className = "empty-msg chart-empty";
+        msg.style.cssText = "position:absolute;top:120px;left:0;right:0;text-align:center;border:none;pointer-events:none;";
+        msg.textContent = "Candles build up while the app is open during market hours (one sample per bot update, every 30s).";
+        box.style.position = "relative"; box.appendChild(msg);
+      } else if (S.bars.length) {
+        box.querySelector(".chart-empty")?.remove();
+      }
+    }
+
     function renderView() {
       const box = document.getElementById("viewContainer");
       if (!liveData) {
@@ -1080,7 +1288,20 @@
         return;
       }
 
-      if (activeTab === "0dte") {
+      if (activeTab !== "chart" && chartObj) { try { chartObj.chart.remove(); } catch (e) {} chartObj = null; }
+      if (activeTab === "chart") {
+        // Keep the chart (and your zoom) across refreshes; only rebuild on ticker/timeframe change.
+        if (!(chartObj && chartObj.key === `${chartTicker}|${chartTf}` && document.getElementById("chartBox"))) {
+          if (chartObj) { try { chartObj.chart.remove(); } catch (e) {} chartObj = null; }
+          box.innerHTML = renderChartShell(chartTicker);
+        } else {
+          const legend = document.getElementById("chartLegend");
+          const fresh = document.createElement("div");
+          fresh.innerHTML = renderChartShell(chartTicker);
+          legend.innerHTML = fresh.querySelector("#chartLegend").innerHTML;
+        }
+        drawChart();
+      } else if (activeTab === "0dte") {
         box.innerHTML = zeroView === "TRINITY" ? renderTrinity() : renderZeroDte(zeroView);
       } else if (activeTab === "7dte") {
         box.innerHTML = renderMagnetMap() + renderNodeGrowth() + renderScanner7dte();
@@ -1196,6 +1417,7 @@
       try {
         liveData = JSON.parse(await fetchGistFile(gistId));
         lastError = "";
+        recordChartSample();
         renderView();
       } catch (e) {
         lastError = e.message || String(e);
